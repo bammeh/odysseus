@@ -267,7 +267,7 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    AUTH_EXEMPT_PREFIXES = ["/static", "/plugins"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -806,6 +806,27 @@ mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
 app.include_router(setup_mcp_routes(mcp_manager))
 logger.info("MCP routes initialized")
+
+# Trusted admin-installed plugins
+from fastapi.staticfiles import StaticFiles as _PluginStaticFiles
+from routes.plugin_routes import setup_plugin_app_routes, setup_plugin_routes
+from src.plugins import PluginManager
+from src.agent_tools import set_plugin_manager
+
+plugin_manager = PluginManager()
+plugin_manager.discover()
+set_plugin_manager(plugin_manager)
+app.state.plugin_manager = plugin_manager
+app.include_router(setup_plugin_routes(plugin_manager))
+app.include_router(setup_plugin_app_routes(plugin_manager))
+for _plugin in plugin_manager.list_plugins():
+    if not any(route.path == f"/plugins/{_plugin.id}/static" for route in app.routes):
+        app.mount(
+            f"/plugins/{_plugin.id}/static",
+            _PluginStaticFiles(directory=str(_plugin.root)),
+            name=f"plugin-{_plugin.id}-static",
+        )
+logger.info("Plugin routes initialized (%d plugins discovered)", len(plugin_manager.list_plugins()))
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
 from src.ai_interaction import set_session_manager as set_ai_session_manager, set_memory_manager as set_ai_memory_manager, set_rag_manager as set_ai_rag_manager

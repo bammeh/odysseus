@@ -64,6 +64,44 @@ TOOL_HANDLERS = {
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
 
+_plugin_manager = None
+
+
+def set_plugin_manager(manager):
+    """Expose approved plugin tools through the existing agent tool registry."""
+    global _plugin_manager
+    _plugin_manager = manager
+    for name in manager.get_tool_handlers().keys():
+        TOOL_HANDLERS[name] = _make_plugin_tool_adapter(name)
+        TOOL_TAGS.add(name)
+    existing_schema_names = {
+        schema.get("function", {}).get("name")
+        for schema in FUNCTION_TOOL_SCHEMAS
+        if isinstance(schema, dict)
+    }
+    for manifest in manager.list_plugins():
+        for tool in manifest.tools:
+            if tool.qualified_name not in existing_schema_names:
+                FUNCTION_TOOL_SCHEMAS.append(tool.schema)
+                existing_schema_names.add(tool.qualified_name)
+
+
+def _make_plugin_tool_adapter(name):
+    async def _execute(content, ctx=None):
+        import json
+
+        args = content
+        if isinstance(content, str):
+            try:
+                args = json.loads(content) if content.strip() else {}
+            except json.JSONDecodeError:
+                args = {"input": content}
+        if not isinstance(args, dict):
+            args = {"input": args}
+        return _plugin_manager.execute_tool(name, args, ctx or {})
+
+    return _execute
+
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
 # is src.constants; always prefer importing from there for new code)
