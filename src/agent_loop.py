@@ -2605,6 +2605,15 @@ async def stream_agent_loop(
     if _upload_msg:
         messages = _insert_before_latest_user(messages, _upload_msg)
     _orchestration_msg = format_orchestration_context(orchestration_context)
+    _orchestration_identity = dict(
+        (orchestration_context or {}).get("identity")
+        or (orchestration_context or {}).get("agent_identity")
+        or {}
+    )
+    if orchestration_context:
+        for _key in ("run_id", "task_id"):
+            if orchestration_context.get(_key):
+                _orchestration_identity.setdefault(_key, orchestration_context.get(_key))
 
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
@@ -4012,6 +4021,7 @@ async def stream_agent_loop(
                             owner=owner,
                             progress_cb=_push_progress,
                             workspace=workspace,
+                            orchestration_identity=_orchestration_identity or None,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.

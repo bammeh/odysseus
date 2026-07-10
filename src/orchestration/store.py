@@ -482,6 +482,32 @@ class OrchestrationStore:
         owner_key = _owner_key(owner)
         run = self._require_run(run_id, owner_key)
         tasks = run.get("plan_graph", {}).get("tasks", [])
+        jobs_by_task: dict[str, list[dict[str, Any]]] = {}
+        try:
+            from src import bg_jobs
+
+            for job in bg_jobs.refresh().values():
+                if job.get("run_id") != run_id:
+                    continue
+                task_id = str(job.get("task_id") or "")
+                jobs_by_task.setdefault(task_id, []).append(
+                    {
+                        "id": job.get("id"),
+                        "session_id": job.get("session_id"),
+                        "run_id": job.get("run_id"),
+                        "task_id": task_id,
+                        "profile_id": job.get("profile_id"),
+                        "agent_instance_id": job.get("agent_instance_id"),
+                        "status": "killed" if job.get("killed") else job.get("status"),
+                        "cwd": job.get("cwd"),
+                        "command": job.get("command"),
+                        "started_at": job.get("started_at"),
+                        "ended_at": job.get("ended_at"),
+                        "exit_code": job.get("exit_code"),
+                    }
+                )
+        except Exception:
+            jobs_by_task = {}
         agents = []
         for task in tasks:
             profile = self._state["profiles"].get(task.get("profile_id"))
@@ -490,6 +516,7 @@ class OrchestrationStore:
                     "task_id": task.get("id"),
                     "agent_identity": self._agent_identity(run, task),
                     "profile": copy.deepcopy(profile or {}),
+                    "jobs": copy.deepcopy(jobs_by_task.get(str(task.get("id") or ""), [])),
                 }
             )
         return {

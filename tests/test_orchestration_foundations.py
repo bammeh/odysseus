@@ -312,9 +312,16 @@ def test_handoff_review_accepts_or_rejects_with_evidence(tmp_path):
     assert tasks[reviewer["id"]]["status"] == "running"
 
 
-def test_run_snapshot_reports_tasks_agents_handoffs_and_gates(tmp_path):
+def test_run_snapshot_reports_tasks_agents_handoffs_and_gates(tmp_path, monkeypatch):
     from routes.orchestration_routes import setup_orchestration_routes
+    from src import bg_jobs
     from src.orchestration.store import OrchestrationStore
+
+    jobs_dir = tmp_path / "bg_jobs"
+    jobs_dir.mkdir()
+    monkeypatch.setattr(bg_jobs, "_STORE", tmp_path / "bg_jobs.json")
+    monkeypatch.setattr(bg_jobs, "_JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(bg_jobs, "_pid_alive", lambda pid: True)
 
     store = OrchestrationStore(tmp_path / "orchestration.json")
     client = _client(setup_orchestration_routes(store))
@@ -346,11 +353,30 @@ def test_run_snapshot_reports_tasks_agents_handoffs_and_gates(tmp_path):
             "mount_policy": {"respected": True},
         },
     )
+    bg_jobs._save(
+        {
+            "job-snapshot": {
+                "id": "job-snapshot",
+                "session_id": "s1",
+                "run_id": run["id"],
+                "task_id": implementer["id"],
+                "profile_id": implementer["profile_id"],
+                "agent_instance_id": implementer["agent_instance_id"],
+                "status": "running",
+                "pid": 123,
+                "started_at": 10,
+                "log_path": str(jobs_dir / "job-snapshot.log"),
+                "exit_path": str(jobs_dir / "job-snapshot.exit"),
+                "command": "pytest",
+            }
+        }
+    )
 
     snapshot = client.get(f"/api/orchestration/runs/{run['id']}/snapshot").json()["snapshot"]
     assert snapshot["run"]["id"] == run["id"]
     assert snapshot["active_tasks"][0]["id"] == implementer["id"]
     assert snapshot["agents"][0]["profile"]["display_name"] == "Alice"
+    assert snapshot["agents"][0]["jobs"][0]["id"] == "job-snapshot"
     assert snapshot["handoffs"][0]["id"] == handoff["id"]
     assert snapshot["quality_gates"][0]["passed"] is True
     assert snapshot["blocked_tasks"] == []

@@ -8,11 +8,13 @@ invariant under test.
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from src import bg_jobs
 from src.agent_tools.bg_job_tools import ManageBgJobsTool
+from src.tool_execution import execute_tool_block
 
 
 @pytest.fixture
@@ -77,6 +79,76 @@ def test_result_text_reports_killed(store):
     rec = _seed(job_id="job0001")
     bg_jobs.kill("job0001")
     assert "killed" in bg_jobs.result_text(bg_jobs.get("job0001")).lower()
+
+
+def test_launch_persists_orchestration_metadata(store, monkeypatch):
+    class FakeProc:
+        pid = 2468
+
+    monkeypatch.setattr(bg_jobs, "find_bash", lambda: None)
+    monkeypatch.setattr(bg_jobs.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(bg_jobs, "detached_popen_kwargs", lambda: {})
+
+    rec = bg_jobs.launch(
+        "echo linked",
+        session_id="sess-a",
+        cwd=str(store["dir"]),
+        metadata={
+            "run_id": "run-1",
+            "task_id": "task-1",
+            "profile_id": "builtin-alice",
+            "agent_instance_id": "agent-1",
+        },
+    )
+
+    saved = bg_jobs.get(rec["id"])
+    assert saved["run_id"] == "run-1"
+    assert saved["task_id"] == "task-1"
+    assert saved["profile_id"] == "builtin-alice"
+    assert saved["agent_instance_id"] == "agent-1"
+    assert saved["cwd"] == str(store["dir"])
+
+
+def test_background_bash_launch_receives_orchestration_metadata(store, monkeypatch):
+    captured = {}
+
+    def fake_launch(command, session_id, cwd=None, max_runtime_s=3600, metadata=None):
+        captured.update(
+            {
+                "command": command,
+                "session_id": session_id,
+                "cwd": cwd,
+                "metadata": metadata,
+            }
+        )
+        return {"id": "bg123"}
+
+    monkeypatch.setattr(bg_jobs, "launch", fake_launch)
+    monkeypatch.setattr("src.tool_execution._owner_is_admin", lambda owner: True)
+
+    desc, result = asyncio.run(
+        execute_tool_block(
+            SimpleNamespace(tool_type="bash", content="#!bg\necho metadata"),
+            session_id="sess-a",
+            owner="alice",
+            workspace=str(store["dir"]),
+            orchestration_identity={
+                "run_id": "run-1",
+                "task_id": "task-1",
+                "profile_id": "builtin-alice",
+                "agent_instance_id": "agent-1",
+            },
+        )
+    )
+
+    assert desc == "bash (background): echo metadata"
+    assert result["bg_job_id"] == "bg123"
+    assert captured["command"] == "echo metadata"
+    assert captured["session_id"] == "sess-a"
+    assert captured["cwd"] == str(store["dir"])
+    assert captured["metadata"]["owner"] == "alice"
+    assert captured["metadata"]["run_id"] == "run-1"
+    assert captured["metadata"]["task_id"] == "task-1"
 
 
 # ── manage_bg_jobs tool ─────────────────────────────────────────────────────

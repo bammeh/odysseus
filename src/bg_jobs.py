@@ -79,7 +79,8 @@ def _pid_alive(pid: Optional[int]) -> bool:
 
 
 def launch(command: str, session_id: str, cwd: Optional[str] = None,
-           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
+           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
+           metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
     Output + the final exit code are written to files so status survives a
@@ -143,6 +144,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "id": job_id,
         "session_id": session_id,
         "command": command,
+        "cwd": cwd or None,
         "status": "running",       # running | done | failed
         "pid": proc.pid,
         "started_at": time.time(),
@@ -153,6 +155,17 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "log_path": str(log_path),
         "exit_path": str(exit_path),
     }
+    for key in (
+        "owner",
+        "run_id",
+        "task_id",
+        "profile_id",
+        "agent_instance_id",
+        "namespace",
+    ):
+        value = (metadata or {}).get(key)
+        if value is not None:
+            rec[key] = str(value)
     jobs = _load()
     jobs[job_id] = rec
     _save(jobs)

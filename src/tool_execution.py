@@ -575,6 +575,7 @@ async def execute_tool_block(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
     tool_policy: Optional[Any] = None,
+    orchestration_identity: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -591,6 +592,7 @@ async def execute_tool_block(
             owner=owner,
             progress_cb=progress_cb,
             tool_policy=tool_policy,
+            orchestration_identity=orchestration_identity,
         )
         return output
     finally:
@@ -604,6 +606,7 @@ async def _execute_tool_block_impl(
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     tool_policy: Optional[Any] = None,
+    orchestration_identity: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -720,7 +723,10 @@ async def _execute_tool_block_impl(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            metadata = dict(orchestration_identity or {})
+            if owner:
+                metadata.setdefault("owner", owner)
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd(), metadata=metadata)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
