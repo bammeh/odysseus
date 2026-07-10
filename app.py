@@ -819,6 +819,7 @@ set_plugin_manager(plugin_manager)
 app.state.plugin_manager = plugin_manager
 app.include_router(setup_plugin_routes(plugin_manager))
 app.include_router(setup_plugin_app_routes(plugin_manager))
+app.state.mounted_plugin_app_routes = {plugin.id for plugin in plugin_manager.list_plugins()}
 for _plugin in plugin_manager.list_plugins():
     if not any(route.path == f"/plugins/{_plugin.id}/static" for route in app.routes):
         app.mount(

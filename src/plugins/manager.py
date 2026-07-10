@@ -14,6 +14,7 @@ from typing import Any, Callable
 from src.constants import PLUGINS_DIR, PLUGIN_STATE_FILE
 
 from .manifest import PluginManifest, PluginManifestError
+from .policy import validate_manifest_policy
 
 
 class PluginContext:
@@ -55,7 +56,7 @@ class PluginManager:
         for manifest_path in sorted(self.root.glob("*/odysseus.plugin.json")):
             manifest = PluginManifest.from_file(manifest_path)
             discovered[manifest.id] = manifest
-            self._state.setdefault("plugins", {}).setdefault(manifest.id, {"approved": True})
+            self._ensure_plugin_state(manifest.id)
         self._plugins = discovered
         self._save_state()
         return list(discovered.values())
@@ -92,11 +93,17 @@ class PluginManager:
     def audit_plugins(self) -> list[dict[str, Any]]:
         audits = []
         for manifest in self.list_plugins():
+            state = self._plugin_state(manifest.id)
+            validation = self.validation_report(manifest.id)
             audits.append(
                 {
                     "id": manifest.id,
                     "name": manifest.name,
                     "version": manifest.version,
+                    "valid": validation["valid"],
+                    "validation": validation,
+                    "enabled": self.is_plugin_globally_enabled(manifest.id),
+                    "capability_status": dict(state.get("capabilities", {})),
                     "entrypoint_exists": manifest.entrypoint.exists(),
                     "permissions": list(manifest.permissions),
                     "dependencies": list(manifest.dependencies),
@@ -110,10 +117,28 @@ class PluginManager:
         return list(self._plugins.values())
 
     def list_plugins_for_user(self, owner: str | None) -> list[dict[str, Any]]:
-        return [
-            manifest.as_dict(enabled_for_user=self.is_user_enabled(owner, manifest.id))
-            for manifest in self.list_plugins()
-        ]
+        plugins = []
+        for manifest in self.list_plugins():
+            validation = self.validation_report(manifest.id)
+            plugins.append(manifest.as_dict(
+                enabled_for_user=self.is_user_enabled(owner, manifest.id),
+                valid=validation["valid"],
+                enabled=self.is_plugin_globally_enabled(manifest.id),
+                capability_status=dict(self._plugin_state(manifest.id).get("capabilities", {})),
+            ) | {"validation": validation})
+        return plugins
+
+    def validation_report(self, plugin_id: str) -> dict[str, Any]:
+        manifest = self._require_plugin(plugin_id)
+        return validate_manifest_policy(manifest)
+
+    def set_plugin_globally_enabled(self, plugin_id: str, enabled: bool) -> None:
+        self._require_plugin(plugin_id)
+        self._plugin_state(plugin_id)["enabled"] = bool(enabled)
+        self._save_state()
+
+    def is_plugin_globally_enabled(self, plugin_id: str) -> bool:
+        return bool(self._plugin_state(plugin_id).get("enabled", False))
 
     def set_user_enabled(self, owner: str | None, plugin_id: str, enabled: bool) -> None:
         self._require_plugin(plugin_id)
@@ -149,7 +174,7 @@ class PluginManager:
     def execute_tool(self, qualified_name: str, args: dict[str, Any] | None, ctx: dict[str, Any] | None = None) -> Any:
         manifest = self._manifest_for_tool(qualified_name)
         owner = (ctx or {}).get("owner")
-        if not self.is_user_enabled(owner, manifest.id):
+        if not self.is_plugin_globally_enabled(manifest.id) or not self.is_user_enabled(owner, manifest.id):
             raise PermissionError(f"Plugin {manifest.id} is not enabled for this user")
         context = self._load_context(manifest)
         handler = context.tool_handlers.get(qualified_name)
@@ -165,15 +190,23 @@ class PluginManager:
             handlers.update(self._load_context(manifest).tool_handlers)
         return handlers
 
-    def build_plugin_routers(self) -> list[tuple[str, Any]]:
+    def build_plugin_routers(self, plugin_id: str | None = None) -> list[tuple[str, Any]]:
         routers: list[tuple[str, Any]] = []
         for manifest in self.list_plugins():
+            if plugin_id and manifest.id != plugin_id:
+                continue
             for router in self._load_context(manifest).routers:
                 routers.append((manifest.id, router))
         return routers
 
     def _enabled_plugins(self, owner: str | None) -> list[PluginManifest]:
-        return [manifest for manifest in self.list_plugins() if self.is_user_enabled(owner, manifest.id)]
+        return [
+            manifest
+            for manifest in self.list_plugins()
+            if self.validation_report(manifest.id)["valid"]
+            and self.is_plugin_globally_enabled(manifest.id)
+            and self.is_user_enabled(owner, manifest.id)
+        ]
 
     def _manifest_for_tool(self, qualified_name: str) -> PluginManifest:
         prefix = "plugin__"
@@ -218,6 +251,28 @@ class PluginManager:
         data.setdefault("plugins", {})
         data.setdefault("users", {})
         return data
+
+    def _ensure_plugin_state(self, plugin_id: str) -> dict[str, Any]:
+        state = self._state.setdefault("plugins", {}).setdefault(
+            plugin_id,
+            {"enabled": True, "capabilities": {}},
+        )
+        state.pop("approved", None)
+        state.setdefault("enabled", True)
+        state.setdefault("capabilities", {})
+        return state
+
+    def _plugin_state(self, plugin_id: str) -> dict[str, Any]:
+        return self._ensure_plugin_state(plugin_id)
+
+    @staticmethod
+    def _capability_keys(manifest: PluginManifest) -> list[str]:
+        keys = []
+        keys.extend(f"panel:{panel.id}" for panel in manifest.panels)
+        keys.extend(f"tool:{tool.name}" for tool in manifest.tools)
+        keys.extend(f"permission:{permission}" for permission in manifest.permissions)
+        keys.extend(f"dependency:{dependency}" for dependency in manifest.dependencies)
+        return keys
 
     def _save_state(self) -> None:
         self.state_file.parent.mkdir(parents=True, exist_ok=True)

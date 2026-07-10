@@ -22,7 +22,7 @@ function safeRasterDataUrl(raw) {
 }
 
 /* ── Tab switching ── */
-const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
+const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'plugins', 'users', 'system']);
 
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
@@ -41,6 +41,7 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'plugins') renderPluginSettings();
     });
   });
 }
@@ -2342,6 +2343,202 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  initPluginSettings();
+}
+
+let _pluginsLoaded = false;
+
+async function _fetchPluginJson(url, options = {}) {
+  const res = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  });
+  if (!res.ok) throw new Error(`Plugin request failed (${res.status})`);
+  return res.json();
+}
+
+function _pluginBadge(label) {
+  return `<span class="settings-plugin-badge">${esc(label)}</span>`;
+}
+
+function _pluginCapabilitySummary(plugin) {
+  const parts = [];
+  const panels = Array.isArray(plugin.panels) ? plugin.panels.length : 0;
+  const tools = Array.isArray(plugin.tools) ? plugin.tools.length : 0;
+  const deps = Array.isArray(plugin.dependencies) ? plugin.dependencies.length : 0;
+  const perms = Array.isArray(plugin.permissions) ? plugin.permissions.length : 0;
+  if (panels) parts.push(_pluginBadge(`${panels} panel${panels === 1 ? '' : 's'}`));
+  if (tools) parts.push(_pluginBadge(`${tools} tool${tools === 1 ? '' : 's'}`));
+  if (deps) parts.push(_pluginBadge(`${deps} dep${deps === 1 ? '' : 's'}`));
+  if (perms) parts.push(_pluginBadge(`${perms} permission${perms === 1 ? '' : 's'}`));
+  return parts.join('') || _pluginBadge('manifest only');
+}
+
+function _pluginStatusBadge(plugin) {
+  if (!plugin.valid) return '<span class="settings-plugin-status invalid">Invalid</span>';
+  if (!plugin.enabled) return '<span class="settings-plugin-status disabled">Globally disabled</span>';
+  return '<span class="settings-plugin-status valid">Valid</span>';
+}
+
+function _renderPluginPanelButtons(plugin) {
+  const panels = Array.isArray(plugin.panels) ? plugin.panels : [];
+  if (!panels.length) return '';
+  return `<div class="settings-plugin-panels">${panels.map(panel => `
+    <button type="button" class="admin-btn-sm settings-plugin-open-panel" data-plugin-id="${esc(plugin.id)}" data-panel-id="${esc(panel.id)}" ${plugin.enabled_for_user ? '' : 'disabled'}>${esc(panel.title || panel.id)}</button>
+  `).join('')}</div>`;
+}
+
+function _renderPluginDetails(plugin) {
+  const permissions = Array.isArray(plugin.permissions) && plugin.permissions.length
+    ? plugin.permissions.map(p => _pluginBadge(p)).join('')
+    : '<span class="admin-toggle-sub">No declared permissions</span>';
+  const dependencies = Array.isArray(plugin.dependencies) && plugin.dependencies.length
+    ? plugin.dependencies.map(d => _pluginBadge(d)).join('')
+    : '<span class="admin-toggle-sub">No declared dependencies</span>';
+  const tools = Array.isArray(plugin.tools) && plugin.tools.length
+    ? plugin.tools.map(t => `<div class="settings-plugin-tool"><strong>${esc(t.qualified_name || t.name)}</strong><span>${esc(t.description || '')}</span></div>`).join('')
+    : '<span class="admin-toggle-sub">No tools</span>';
+  const validation = plugin.validation || {};
+  const issues = Array.isArray(validation.issues) ? validation.issues : [];
+  const issueHtml = issues.length
+    ? issues.map(issue => `<div class="settings-plugin-issue ${esc(issue.severity || 'error')}"><strong>${esc(issue.code || 'policy.issue')}</strong><span>${esc(issue.message || '')}</span></div>`).join('')
+    : '<span class="admin-toggle-sub">All manifest policy checks passed.</span>';
+  return `
+    <details class="settings-plugin-details">
+      <summary>Validation</summary>
+      <div class="settings-plugin-issues">${issueHtml}</div>
+    </details>
+    <details class="settings-plugin-details">
+      <summary>Capabilities</summary>
+      <div class="settings-plugin-detail-grid">
+        <div><div class="settings-plugin-detail-label">Permissions</div>${permissions}</div>
+        <div><div class="settings-plugin-detail-label">Dependencies</div>${dependencies}</div>
+      </div>
+      <div class="settings-plugin-tools">${tools}</div>
+    </details>
+  `;
+}
+
+async function renderPluginSettings() {
+  const list = el('settings-plugin-list');
+  const msg = el('settings-plugin-msg');
+  if (!list) return;
+  list.innerHTML = '<div class="admin-empty">Loading...</div>';
+  if (msg) msg.textContent = '';
+  try {
+    const plugins = await _fetchPluginJson('/api/plugins');
+    _pluginsLoaded = true;
+    if (!Array.isArray(plugins) || !plugins.length) {
+      list.innerHTML = '<div class="admin-empty">No plugins installed yet.</div>';
+      return;
+    }
+    list.innerHTML = plugins.map(plugin => `
+      <div class="settings-plugin-row" data-plugin-id="${esc(plugin.id)}">
+        <div class="settings-plugin-main">
+          <div class="settings-plugin-title-row">
+            <div>
+              <div class="settings-plugin-title">${esc(plugin.name || plugin.id)} ${_pluginStatusBadge(plugin)}</div>
+              <div class="settings-plugin-sub">${esc(plugin.id)} · ${esc(plugin.version || 'unknown')}</div>
+            </div>
+            <label class="admin-switch" title="Enable plugin for your account">
+              <input type="checkbox" class="settings-plugin-enable" data-plugin-id="${esc(plugin.id)}" ${plugin.enabled_for_user ? 'checked' : ''} ${plugin.enabled && plugin.valid ? '' : 'disabled'}>
+              <span class="admin-slider"></span>
+            </label>
+          </div>
+          <div class="settings-plugin-description">${esc(plugin.description || 'No description provided.')}</div>
+          <div class="settings-plugin-capabilities">${_pluginCapabilitySummary(plugin)}</div>
+          <div class="settings-plugin-admin-actions">
+            <button type="button" class="admin-btn-sm settings-plugin-global-enable" data-plugin-id="${esc(plugin.id)}" data-enabled="${plugin.enabled ? '0' : '1'}" ${plugin.valid ? '' : 'disabled'}>${plugin.enabled ? 'Disable Globally' : 'Enable Globally'}</button>
+          </div>
+          ${_renderPluginPanelButtons(plugin)}
+          ${_renderPluginDetails(plugin)}
+        </div>
+      </div>
+    `).join('');
+    list.querySelectorAll('.settings-plugin-enable').forEach(input => {
+      input.addEventListener('change', async () => {
+        input.disabled = true;
+        try {
+          await _fetchPluginJson(`/api/plugins/${encodeURIComponent(input.dataset.pluginId)}/enable`, {
+            method: 'POST',
+            body: JSON.stringify({ enabled: input.checked }),
+          });
+          await renderPluginSettings();
+        } catch (err) {
+          input.checked = !input.checked;
+          if (msg) msg.textContent = 'Failed to update plugin.';
+        } finally {
+          input.disabled = false;
+        }
+      });
+    });
+    list.querySelectorAll('.settings-plugin-global-enable').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await _fetchPluginJson(`/api/plugins/${encodeURIComponent(btn.dataset.pluginId)}/global-enable`, {
+            method: 'POST',
+            body: JSON.stringify({ enabled: btn.dataset.enabled === '1' }),
+          });
+          await renderPluginSettings();
+        } catch (err) {
+          if (msg) msg.textContent = 'Failed to update global state.';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+    list.querySelectorAll('.settings-plugin-open-panel').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const mod = await import('./plugins.js');
+          const opener = mod.openPanel || (window.odysseusPlugins && window.odysseusPlugins.openPanel);
+          await opener(btn.dataset.pluginId, btn.dataset.panelId);
+        } catch (err) {
+          if (msg) msg.textContent = 'Failed to open plugin panel.';
+        }
+      });
+    });
+  } catch (err) {
+    list.innerHTML = '<div class="admin-empty">Failed to load plugins.</div>';
+  }
+}
+
+function initPluginSettings() {
+  const refreshBtn = el('settings-plugin-refresh-btn');
+  const installBtn = el('settings-plugin-install-btn');
+  if (refreshBtn && refreshBtn.dataset.bound !== '1') {
+    refreshBtn.dataset.bound = '1';
+    refreshBtn.addEventListener('click', () => renderPluginSettings());
+  }
+  if (installBtn && installBtn.dataset.bound !== '1') {
+    installBtn.dataset.bound = '1';
+    installBtn.addEventListener('click', async () => {
+      const input = el('settings-plugin-install-path');
+      const msg = el('settings-plugin-msg');
+      const path = input ? input.value.trim() : '';
+      if (!path) {
+        if (msg) msg.textContent = 'Enter a local plugin folder path.';
+        return;
+      }
+      installBtn.disabled = true;
+      if (msg) msg.textContent = 'Installing plugin...';
+      try {
+        await _fetchPluginJson('/api/plugins/install/local', {
+          method: 'POST',
+          body: JSON.stringify({ path }),
+        });
+        if (input) input.value = '';
+        if (msg) msg.textContent = 'Plugin installed.';
+        await renderPluginSettings();
+      } catch (err) {
+        if (msg) msg.textContent = 'Plugin install failed.';
+      } finally {
+        installBtn.disabled = false;
+      }
+    });
+  }
 }
 
 function notifyIntegrationsChanged() {
@@ -5731,6 +5928,7 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (activeTab === 'plugins') renderPluginSettings();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }

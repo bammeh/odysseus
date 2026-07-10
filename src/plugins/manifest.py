@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .policy import validate_dependency_spec, validate_permission_name
+
 
 PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 CAPABILITY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -143,13 +145,20 @@ class PluginManifest:
             entrypoint=entrypoint,
             description=str(data.get("description") or ""),
             author=str(data.get("author") or ""),
-            permissions=tuple(str(item) for item in data.get("permissions", []) or []),
-            dependencies=tuple(str(item) for item in data.get("dependencies", []) or []),
+            permissions=tuple(_parse_permission(item) for item in data.get("permissions", []) or []),
+            dependencies=tuple(_parse_dependency(item) for item in data.get("dependencies", []) or []),
             panels=panels,
             tools=tools,
         )
 
-    def as_dict(self, *, enabled_for_user: bool = False) -> dict[str, Any]:
+    def as_dict(
+        self,
+        *,
+        enabled_for_user: bool = False,
+        valid: bool = True,
+        enabled: bool = False,
+        capability_status: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
@@ -161,6 +170,9 @@ class PluginManifest:
             "panels": [panel.as_dict() for panel in self.panels],
             "tools": [tool.as_dict() for tool in self.tools],
             "enabled_for_user": enabled_for_user,
+            "valid": valid,
+            "enabled": enabled,
+            "capability_status": capability_status or {},
         }
 
 
@@ -195,3 +207,17 @@ def _parse_tool(plugin_id: str, item: Any) -> PluginTool:
         read_only=bool(item.get("read_only", True)),
         admin_only=bool(item.get("admin_only", False)),
     )
+
+
+def _parse_permission(item: Any) -> str:
+    try:
+        return validate_permission_name(str(item))
+    except ValueError as exc:
+        raise PluginManifestError(str(exc)) from exc
+
+
+def _parse_dependency(item: Any) -> str:
+    try:
+        return validate_dependency_spec(str(item))
+    except ValueError as exc:
+        raise PluginManifestError(str(exc)) from exc

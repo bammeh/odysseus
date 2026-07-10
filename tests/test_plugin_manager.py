@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from src.plugins.manager import PluginManager
 
 
@@ -48,6 +50,7 @@ def test_manager_discovers_plugins_and_requires_user_opt_in(tmp_path):
     manager.discover()
 
     assert [plugin.id for plugin in manager.list_plugins()] == ["demo_plugin"]
+    assert manager.list_plugins_for_user("alice")[0]["valid"] is True
     assert manager.list_panels_for_user("alice") == []
 
     manager.set_user_enabled("alice", "demo_plugin", True)
@@ -71,3 +74,50 @@ def test_manager_registers_plugin_tools_after_user_opt_in(tmp_path):
 
     result = manager.execute_tool("plugin__demo_plugin__echo", {"text": "hello"}, {"owner": "alice"})
     assert result == {"echo": "hello"}
+
+
+def test_manager_exposes_valid_plugins_after_user_opt_in(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    state_file = tmp_path / "plugins.json"
+    make_plugin(plugins_dir / "demo_plugin")
+
+    manager = PluginManager(root=plugins_dir, state_file=state_file)
+    manager.discover()
+    manager.set_user_enabled("alice", "demo_plugin", True)
+
+    assert manager.list_panels_for_user("alice")[0]["plugin_id"] == "demo_plugin"
+    assert manager.list_tool_schemas_for_user("alice")[0]["function"]["name"] == "plugin__demo_plugin__echo"
+
+
+def test_manager_global_disable_removes_user_surfaces(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    state_file = tmp_path / "plugins.json"
+    make_plugin(plugins_dir / "demo_plugin")
+
+    manager = PluginManager(root=plugins_dir, state_file=state_file)
+    manager.discover()
+    manager.set_plugin_globally_enabled("demo_plugin", False)
+    manager.set_user_enabled("alice", "demo_plugin", True)
+
+    listed = manager.list_plugins_for_user("alice")[0]
+    assert listed["enabled"] is False
+    assert listed["enabled_for_user"] is True
+    assert manager.list_panels_for_user("alice") == []
+    with pytest.raises(PermissionError):
+        manager.execute_tool("plugin__demo_plugin__echo", {"text": "hello"}, {"owner": "alice"})
+
+
+def test_manager_validation_report_marks_missing_panel_file_invalid(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    state_file = tmp_path / "plugins.json"
+    make_plugin(plugins_dir / "demo_plugin")
+    (plugins_dir / "demo_plugin" / "panel.html").unlink()
+
+    manager = PluginManager(root=plugins_dir, state_file=state_file)
+    manager.discover()
+    manager.set_user_enabled("alice", "demo_plugin", True)
+
+    report = manager.validation_report("demo_plugin")
+    assert report["valid"] is False
+    assert report["issues"][0]["code"] == "panel.path.missing"
+    assert manager.list_panels_for_user("alice") == []

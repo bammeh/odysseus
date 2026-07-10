@@ -65,3 +65,150 @@
   display: block;
   background: #fff;
 }
+
+.settings-plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-plugin-row {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel, #111827) 88%, transparent);
+}
+
+.settings-plugin-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-plugin-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-plugin-title {
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-plugin-sub,
+.settings-plugin-description,
+.settings-plugin-detail-label,
+.settings-plugin-tool span {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg, #fff) 58%, transparent);
+}
+
+.settings-plugin-capabilities,
+.settings-plugin-panels,
+.settings-plugin-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-plugin-admin-actions {
+  margin-top: 2px;
+}
+
+.settings-plugin-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+}
+
+.settings-plugin-status.valid {
+  color: color-mix(in srgb, #50fa7b 78%, var(--fg, #fff));
+}
+
+.settings-plugin-status.invalid {
+  color: color-mix(in srgb, var(--color-error, #ff5555) 82%, var(--fg, #fff));
+}
+
+.settings-plugin-status.disabled {
+  color: color-mix(in srgb, var(--fg, #fff) 55%, transparent);
+}
+
+.settings-plugin-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg, #fff) 78%, transparent);
+}
+
+.settings-plugin-details {
+  margin-top: 2px;
+}
+
+.settings-plugin-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settings-plugin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-plugin-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.settings-plugin-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.settings-plugin-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+}
+
+.settings-plugin-issue.error {
+  border-color: color-mix(in srgb, var(--color-error, #ff5555) 45%, var(--border));
+}
+
+.settings-plugin-issue.warning {
+  border-color: color-mix(in srgb, #f1c40f 45%, var(--border));
+}
+
+.settings-plugin-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg, #fff) 5%, transparent);
+}

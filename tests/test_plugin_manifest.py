@@ -83,3 +83,40 @@ def test_manifest_rejects_panel_paths_outside_plugin(tmp_path):
 
     with pytest.raises(PluginManifestError):
         PluginManifest.from_file(manifest_path)
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    ["-e ./pkg", "https://example.com/pkg.whl", "../local-pkg", "pkg; rm -rf .", "pkg | cmd"],
+)
+def test_manifest_rejects_unsafe_dependency_specs(tmp_path, dependency):
+    manifest_path = write_manifest(
+        tmp_path,
+        {
+            "id": "bad_dep",
+            "name": "Bad Dependency",
+            "version": "1.0.0",
+            "entrypoint": "plugin.py",
+            "dependencies": [dependency],
+        },
+    )
+
+    with pytest.raises(PluginManifestError):
+        PluginManifest.from_file(manifest_path)
+
+
+def test_manifest_accepts_simple_pinned_dependency_specs(tmp_path):
+    manifest_path = write_manifest(
+        tmp_path,
+        {
+            "id": "good_dep",
+            "name": "Good Dependency",
+            "version": "1.0.0",
+            "entrypoint": "plugin.py",
+            "dependencies": ["httpx==0.28.1", "pydantic>=2.0"],
+        },
+    )
+
+    manifest = PluginManifest.from_file(manifest_path)
+
+    assert manifest.dependencies == ("httpx==0.28.1", "pydantic>=2.0")

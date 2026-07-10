@@ -1410,6 +1410,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             <span>Agent Tools</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="plugins">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7V3m8 4V3M6 11h12M7 21h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"/><path d="M9 15h6"/></svg>
+            <span>Plugins</span>
+          </button>
           <button class="settings-nav-item admin-only" data-settings-tab="users">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             <span>Users</span>
@@ -2283,6 +2287,24 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Built-in Tools</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Enable or disable tools available to the AI agent.</div>
             <div id="adm-builtin-tools-list" class="admin-user-list"></div>
+          </div>
+        </div>
+
+        <!-- ═══ PLUGINS TAB ═══ -->
+        <div data-settings-panel="plugins" class="hidden">
+          <div class="admin-card" style="margin-bottom:12px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M8 7V3m8 4V3M6 11h12M7 21h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"/><path d="M9 15h6"/></svg>Plugins</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">Trusted extensions can add app panels, routes, tools, context providers, and jobs. Enable a plugin to make its panels and tools available for your account.</div>
+            <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+              <input id="settings-plugin-install-path" class="settings-select" type="text" placeholder="Local plugin folder path" style="flex:1;min-width:240px;">
+              <button type="button" class="admin-btn-add" id="settings-plugin-install-btn">Install Local</button>
+              <button type="button" class="admin-btn-sm" id="settings-plugin-refresh-btn">Refresh</button>
+            </div>
+            <div id="settings-plugin-msg" class="admin-toggle-sub" style="margin-top:8px"></div>
+          </div>
+          <div class="admin-card">
+            <h2>Installed Plugins</h2>
+            <div id="settings-plugin-list" class="settings-plugin-list"><div class="admin-empty">Loading...</div></div>
           </div>
         </div>
 

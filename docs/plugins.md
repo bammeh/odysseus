@@ -70,6 +70,14 @@ POST /api/plugins/install/local
 { "path": "C:/path/to/my_plugin" }
 ```
 
+Installed plugins are considered valid when they pass manifest validation and the
+plugin-system guards. Admins can pause a valid plugin globally without uninstalling it:
+
+```http
+POST /api/plugins/my_plugin/global-enable
+{ "enabled": false }
+```
+
 Audit installed plugins:
 
 ```http
@@ -83,7 +91,7 @@ POST /api/plugins/install/github
 { "repo_url": "https://github.com/org/repo", "subpath": "plugins/my_plugin" }
 ```
 
-V1 records GitHub candidates for audit. Downloading and dependency installation should remain an admin-approved release gate.
+V1 records GitHub candidates for audit. Downloading and dependency installation should remain gated by the plugin system's validation rules.
 
 ## User Flow
 
@@ -113,5 +121,29 @@ Panels are movable/resizable Odysseus windows containing sandboxed iframes.
 - Plugin IDs, tool names, and panel IDs must be lowercase slugs.
 - Manifest paths are confined to the plugin folder.
 - Plugins are trusted Python code. Installing one is equivalent to installing an app extension.
+- Newly installed plugins must pass manifest validation and plugin-system guards.
+- Global disable overrides per-user opt-in.
 - Per-user opt-in controls visibility of panels and agent-callable tools.
 - Dangerous host capabilities should be represented in `permissions` and reviewed through `/api/plugins/audit`.
+
+## Manifest Policy
+
+The plugin system validates manifests before installing or exposing a plugin:
+
+- `id` must be a lowercase slug using letters, numbers, `_`, or `-`.
+- Panel IDs and tool names must be lowercase slugs.
+- `entrypoint` and panel paths must stay inside the plugin folder.
+- Panel files must exist before panels are exposed.
+- Tool parameter schemas must be JSON objects.
+- Permissions must be lowercase names such as `network:http` or `files:read`.
+- Dependencies must be plain package specs such as `httpx==0.28.1` or `pydantic>=2.0`.
+- Dependency specs cannot be local paths, URLs, editable installs, shell fragments, or direct file references.
+- Plugin routes are always mounted under `/api/plugins/{plugin_id}`.
+
+Validation is available through:
+
+```http
+GET /api/plugins/my_plugin/validation
+```
+
+Settings shows invalid plugins with the failed rule codes and hides their panels/tools until the manifest satisfies the policy.
