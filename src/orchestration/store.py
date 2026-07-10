@@ -310,6 +310,8 @@ class OrchestrationStore:
             "id": _new_id("handoff"),
             "owner": owner_key,
             "run_id": run["id"],
+            "from_task_id": str(payload.get("from_task_id") or ""),
+            "to_task_id": str(payload.get("to_task_id") or ""),
             "from_profile_id": str(payload.get("from_profile_id") or ""),
             "to_profile_id": str(payload.get("to_profile_id") or ""),
             "summary": str(payload.get("summary") or ""),
@@ -322,9 +324,135 @@ class OrchestrationStore:
         self._save()
         return copy.deepcopy(handoff)
 
+    def start_task(self, owner: str | None, run_id: str, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        run = self._require_run(run_id, owner_key)
+        task = self._require_task(run, task_id)
+        self._require_enabled_profile(task.get("profile_id"), owner_key)
+        if task.get("status") not in {"pending", "blocked", "rejected"}:
+            raise OrchestrationError(f"invalid transition from {task.get('status')} to running")
+        task["scope"] = copy.deepcopy(payload.get("scope") or task.get("scope") or {})
+        if "session_id" in payload:
+            task["session_id"] = str(payload.get("session_id") or "")
+        task["status"] = "running"
+        task["heartbeat"] = "running"
+        task["started_at"] = task.get("started_at") or _now()
+        self._append_status(task, "running", payload.get("notes", ""))
+        task["agent_identity"] = self._agent_identity(run, task)
+        run["heartbeat"] = "running"
+        run["updated_at"] = _now()
+        self._save()
+        return copy.deepcopy(task)
+
+    def attach_task_session(self, owner: str | None, run_id: str, task_id: str, session_id: str) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        run = self._require_run(run_id, owner_key)
+        task = self._require_task(run, task_id)
+        task["session_id"] = str(session_id or "")
+        task["agent_identity"] = self._agent_identity(run, task)
+        task["updated_at"] = _now()
+        run["updated_at"] = _now()
+        self._save()
+        return copy.deepcopy(task)
+
+    def transition_task(self, owner: str | None, run_id: str, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        run = self._require_run(run_id, owner_key)
+        task = self._require_task(run, task_id)
+        new_status = str(payload.get("status") or "").strip()
+        if not new_status:
+            raise OrchestrationError("status is required")
+        current = str(task.get("status") or "pending")
+        allowed = {
+            "pending": {"running", "failed"},
+            "running": {"blocked", "failed", "needs_review"},
+            "blocked": {"running", "failed"},
+            "needs_review": {"accepted", "rejected", "running"},
+            "rejected": {"running", "failed"},
+            "accepted": {"integrated"},
+            "integrated": set(),
+            "failed": {"running"},
+        }
+        if new_status not in allowed.get(current, set()):
+            raise OrchestrationError(f"invalid transition from {current} to {new_status}")
+        task["status"] = new_status
+        task["heartbeat"] = str(payload.get("heartbeat") or self._heartbeat_for_status(new_status))
+        if payload.get("evidence"):
+            task.setdefault("evidence", []).extend(copy.deepcopy(payload.get("evidence") or []))
+        self._append_status(task, new_status, payload.get("notes", ""))
+        task["agent_identity"] = self._agent_identity(run, task)
+        run["heartbeat"] = self._run_heartbeat(run)
+        run["updated_at"] = _now()
+        self._save()
+        return copy.deepcopy(task)
+
+    def task_context(self, owner: str | None, run_id: str, task_id: str) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        run = self._require_run(run_id, owner_key)
+        task = self._require_task(run, task_id)
+        profile = self._require_profile(task.get("profile_id", ""), owner_key, allow_builtin=True)
+        handoffs = [
+            copy.deepcopy(handoff)
+            for handoff in self._state["handoffs"].values()
+            if handoff.get("run_id") == run_id
+            and (handoff.get("to_task_id") == task_id or handoff.get("from_task_id") == task_id)
+        ]
+        capsules = [
+            {"kind": "agent_profile", "profile": copy.deepcopy(profile), "tokens": 1, "included": True},
+            {
+                "kind": "plan_graph_state",
+                "run_id": run_id,
+                "goal": run.get("goal", ""),
+                "tasks": copy.deepcopy(run.get("plan_graph", {}).get("tasks", [])),
+                "tokens": 1,
+                "included": True,
+            },
+            {"kind": "handoff_summary", "handoffs": handoffs, "tokens": 1, "included": True},
+        ]
+        if task.get("scope"):
+            capsules.append({"kind": "mount_policy", "scope": copy.deepcopy(task.get("scope")), "tokens": 1, "included": True})
+        return {"agent_identity": self._agent_identity(run, task), "capsules": capsules}
+
+    def review_handoff(self, owner: str | None, handoff_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        handoff = self._require_handoff(handoff_id, owner_key)
+        run = self._require_run(handoff["run_id"], owner_key)
+        decision = str(payload.get("decision") or "").strip()
+        if decision not in {"accepted", "rejected"}:
+            raise OrchestrationError("decision must be accepted or rejected")
+        handoff["status"] = decision
+        handoff["review"] = {
+            "decision": decision,
+            "reviewer_profile_id": str(payload.get("reviewer_profile_id") or ""),
+            "notes": str(payload.get("notes") or ""),
+            "evidence": list(payload.get("evidence") or []),
+            "created_at": _now(),
+        }
+        from_task = self._find_task(run, handoff.get("from_task_id"))
+        to_task = self._find_task(run, handoff.get("to_task_id"))
+        if decision == "accepted":
+            if from_task:
+                from_task["status"] = "accepted"
+                from_task["heartbeat"] = "idle"
+                self._append_status(from_task, "accepted", payload.get("notes", ""))
+            if to_task:
+                to_task["status"] = "running"
+                to_task["heartbeat"] = "running"
+                to_task["agent_identity"] = self._agent_identity(run, to_task)
+                self._append_status(to_task, "running", "handoff accepted")
+        else:
+            if from_task:
+                from_task["status"] = "rejected"
+                from_task["heartbeat"] = "blocked"
+                self._append_status(from_task, "rejected", payload.get("notes", ""))
+        run["heartbeat"] = self._run_heartbeat(run)
+        run["updated_at"] = _now()
+        self._save()
+        return {"handoff": copy.deepcopy(handoff), "run": copy.deepcopy(run)}
+
     def evaluate_quality_gate(self, owner: str | None, payload: dict[str, Any]) -> dict[str, Any]:
         owner_key = _owner_key(owner)
-        self._require_run(str(payload.get("run_id") or ""), owner_key)
+        run = self._require_run(str(payload.get("run_id") or ""), owner_key)
         evidence = payload.get("evidence") or []
         changed_files = set(payload.get("changed_files") or [])
         allowed_files = set(payload.get("allowed_files") or [])
@@ -344,8 +472,42 @@ class OrchestrationStore:
             "created_at": _now(),
         }
         self._state["quality_gates"][result["id"]] = result
+        task = self._find_task(run, result["task_id"])
+        if task:
+            task["quality_gate_status"] = "passed" if result["passed"] else "failed"
         self._save()
         return copy.deepcopy(result)
+
+    def snapshot(self, owner: str | None, run_id: str) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        run = self._require_run(run_id, owner_key)
+        tasks = run.get("plan_graph", {}).get("tasks", [])
+        agents = []
+        for task in tasks:
+            profile = self._state["profiles"].get(task.get("profile_id"))
+            agents.append(
+                {
+                    "task_id": task.get("id"),
+                    "agent_identity": self._agent_identity(run, task),
+                    "profile": copy.deepcopy(profile or {}),
+                }
+            )
+        return {
+            "run": copy.deepcopy(run),
+            "active_tasks": [copy.deepcopy(task) for task in tasks if task.get("status") in {"running", "needs_review"}],
+            "blocked_tasks": [copy.deepcopy(task) for task in tasks if task.get("status") == "blocked"],
+            "agents": agents,
+            "handoffs": [
+                copy.deepcopy(handoff)
+                for handoff in self._state["handoffs"].values()
+                if handoff.get("run_id") == run_id
+            ],
+            "quality_gates": [
+                copy.deepcopy(gate)
+                for gate in self._state["quality_gates"].values()
+                if gate.get("run_id") == run_id
+            ],
+        }
 
     def _load(self) -> dict[str, Any]:
         try:
@@ -440,6 +602,69 @@ class OrchestrationStore:
         if not run or run.get("owner") != owner:
             raise OrchestrationError("unknown run")
         return run
+
+    def _require_handoff(self, handoff_id: str, owner: str) -> dict[str, Any]:
+        handoff = self._state["handoffs"].get(str(handoff_id or ""))
+        if not handoff or handoff.get("owner") != owner:
+            raise OrchestrationError("unknown handoff")
+        return handoff
+
+    def _require_task(self, run: dict[str, Any], task_id: str) -> dict[str, Any]:
+        task = self._find_task(run, task_id)
+        if not task:
+            raise OrchestrationError("unknown task")
+        return task
+
+    @staticmethod
+    def _find_task(run: dict[str, Any], task_id: str | None) -> dict[str, Any] | None:
+        for task in run.get("plan_graph", {}).get("tasks", []):
+            if task.get("id") == task_id:
+                return task
+        return None
+
+    @staticmethod
+    def _heartbeat_for_status(status: str) -> str:
+        return {
+            "running": "running",
+            "blocked": "blocked",
+            "needs_review": "needs_review",
+            "failed": "failed",
+            "integrated": "complete",
+        }.get(status, "idle")
+
+    def _run_heartbeat(self, run: dict[str, Any]) -> str:
+        statuses = {task.get("status") for task in run.get("plan_graph", {}).get("tasks", [])}
+        if "failed" in statuses:
+            return "failed"
+        if "blocked" in statuses:
+            return "blocked"
+        if "needs_review" in statuses:
+            return "needs_review"
+        if "running" in statuses:
+            return "running"
+        if statuses and statuses <= {"integrated", "accepted"}:
+            return "complete"
+        return "idle"
+
+    @staticmethod
+    def _append_status(task: dict[str, Any], status: str, notes: Any = "") -> None:
+        task.setdefault("status_history", []).append(
+            {"status": status, "notes": str(notes or ""), "timestamp": _now()}
+        )
+        task["updated_at"] = _now()
+
+    def _agent_identity(self, run: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "owner": run.get("owner", "default"),
+            "profile_id": task.get("profile_id", ""),
+            "agent_instance_id": task.get("agent_instance_id", ""),
+            "role": task.get("role", ""),
+            "namespace": task.get("namespace", ""),
+            "scope": copy.deepcopy(task.get("scope") or {}),
+            "run_id": run.get("id", ""),
+            "task_id": task.get("id", ""),
+            "session_id": task.get("session_id", ""),
+        }
 
     def _profile_for_role(self, team: dict[str, Any], role: str) -> str | None:
         for member in team.get("members") or []:

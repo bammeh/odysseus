@@ -86,10 +86,53 @@ def setup_orchestration_routes(store: OrchestrationStore | None = None) -> APIRo
         except OrchestrationError as exc:
             raise _handle_error(exc)
 
+    @router.get("/runs/{run_id}/snapshot")
+    def run_snapshot(run_id: str, request: Request):
+        try:
+            return {"snapshot": store.snapshot(_owner(request), run_id)}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.post("/runs/{run_id}/tasks/{task_id}/start")
+    async def start_task(run_id: str, task_id: str, request: Request):
+        try:
+            return {"task": store.start_task(_owner(request), run_id, task_id, await _json(request))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.post("/runs/{run_id}/tasks/{task_id}/attach-session")
+    async def attach_task_session(run_id: str, task_id: str, request: Request):
+        payload = await _json(request)
+        try:
+            return {"task": store.attach_task_session(_owner(request), run_id, task_id, payload.get("session_id", ""))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.post("/runs/{run_id}/tasks/{task_id}/transition")
+    async def transition_task(run_id: str, task_id: str, request: Request):
+        try:
+            return {"task": store.transition_task(_owner(request), run_id, task_id, await _json(request))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.get("/runs/{run_id}/tasks/{task_id}/context")
+    def task_context(run_id: str, task_id: str, request: Request):
+        try:
+            return store.task_context(_owner(request), run_id, task_id)
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
     @router.post("/handoffs")
     async def create_handoff(request: Request):
         try:
             return {"handoff": store.create_handoff(_owner(request), await _json(request))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.post("/handoffs/{handoff_id}/review")
+    async def review_handoff(handoff_id: str, request: Request):
+        try:
+            return store.review_handoff(_owner(request), handoff_id, await _json(request))
         except OrchestrationError as exc:
             raise _handle_error(exc)
 

@@ -170,6 +170,192 @@ def test_runs_handoffs_and_quality_gates_are_generic_over_profiles(tmp_path):
     assert {gate["name"]: gate["status"] for gate in gates["gates"]}["scope_guard"] == "pass"
 
 
+def test_task_start_attach_session_and_context_capsules(tmp_path):
+    from routes.orchestration_routes import setup_orchestration_routes
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    client = _client(setup_orchestration_routes(store))
+
+    run = client.post(
+        "/api/orchestration/runs",
+        json={"goal": "Implement task lifecycle", "team_id": "default"},
+    ).json()["run"]
+    task = run["plan_graph"]["tasks"][0]
+
+    started = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/start",
+        json={"session_id": "session-alice", "scope": {"files": ["src/orchestration/store.py"]}},
+    ).json()["task"]
+
+    assert started["status"] == "running"
+    assert started["heartbeat"] == "running"
+    assert started["session_id"] == "session-alice"
+    assert started["scope"]["files"] == ["src/orchestration/store.py"]
+    assert started["agent_identity"] == {
+        "owner": "default",
+        "profile_id": started["profile_id"],
+        "agent_instance_id": started["agent_instance_id"],
+        "role": "implementer",
+        "namespace": started["namespace"],
+        "scope": {"files": ["src/orchestration/store.py"]},
+        "run_id": run["id"],
+        "task_id": task["id"],
+        "session_id": "session-alice",
+    }
+
+    attached = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/attach-session",
+        json={"session_id": "session-alice-2"},
+    ).json()["task"]
+    assert attached["session_id"] == "session-alice-2"
+    assert attached["agent_identity"]["session_id"] == "session-alice-2"
+
+    context = client.get(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/context"
+    ).json()
+    capsule_kinds = {capsule["kind"] for capsule in context["capsules"]}
+    assert {"agent_profile", "plan_graph_state", "handoff_summary"}.issubset(capsule_kinds)
+    profile_capsule = next(c for c in context["capsules"] if c["kind"] == "agent_profile")
+    assert profile_capsule["profile"]["display_name"] == "Alice"
+    assert context["agent_identity"]["session_id"] == "session-alice-2"
+
+
+def test_task_state_machine_rejects_invalid_transitions_and_updates_heartbeat(tmp_path):
+    from routes.orchestration_routes import setup_orchestration_routes
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    client = _client(setup_orchestration_routes(store))
+
+    run = client.post("/api/orchestration/runs", json={"goal": "State machine"}).json()["run"]
+    task = run["plan_graph"]["tasks"][0]
+
+    invalid = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/transition",
+        json={"status": "integrated"},
+    )
+    assert invalid.status_code == 400
+    assert "invalid transition" in invalid.json()["detail"]
+
+    running = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/start",
+        json={"session_id": "s1"},
+    ).json()["task"]
+    assert running["status"] == "running"
+
+    blocked = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/transition",
+        json={"status": "blocked", "heartbeat": "blocked", "notes": "Needs user input"},
+    ).json()["task"]
+    assert blocked["status"] == "blocked"
+    assert blocked["heartbeat"] == "blocked"
+    assert blocked["status_history"][-1]["notes"] == "Needs user input"
+
+    resumed = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/transition",
+        json={"status": "running", "heartbeat": "running"},
+    ).json()["task"]
+    assert resumed["status"] == "running"
+    assert resumed["heartbeat"] == "running"
+
+    review = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{task['id']}/transition",
+        json={"status": "needs_review", "evidence": [{"kind": "test", "ref": "tests pass"}]},
+    ).json()["task"]
+    assert review["status"] == "needs_review"
+    assert review["heartbeat"] == "needs_review"
+    assert review["evidence"] == [{"kind": "test", "ref": "tests pass"}]
+
+
+def test_handoff_review_accepts_or_rejects_with_evidence(tmp_path):
+    from routes.orchestration_routes import setup_orchestration_routes
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    client = _client(setup_orchestration_routes(store))
+
+    run = client.post("/api/orchestration/runs", json={"goal": "Review handoff"}).json()["run"]
+    implementer, reviewer = run["plan_graph"]["tasks"][:2]
+    client.post(f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/start", json={})
+    client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/transition",
+        json={"status": "needs_review", "evidence": [{"kind": "diff", "ref": "abc123"}]},
+    )
+    handoff = client.post(
+        "/api/orchestration/handoffs",
+        json={
+            "run_id": run["id"],
+            "from_task_id": implementer["id"],
+            "to_task_id": reviewer["id"],
+            "from_profile_id": implementer["profile_id"],
+            "to_profile_id": reviewer["profile_id"],
+            "summary": "Ready for review",
+            "evidence": [{"kind": "diff", "ref": "abc123"}],
+        },
+    ).json()["handoff"]
+
+    accepted = client.post(
+        f"/api/orchestration/handoffs/{handoff['id']}/review",
+        json={
+            "decision": "accepted",
+            "reviewer_profile_id": reviewer["profile_id"],
+            "notes": "Evidence matches scope.",
+            "evidence": [{"kind": "review", "ref": "bob-approved"}],
+        },
+    ).json()
+
+    assert accepted["handoff"]["status"] == "accepted"
+    assert accepted["handoff"]["review"]["decision"] == "accepted"
+    tasks = {task["id"]: task for task in accepted["run"]["plan_graph"]["tasks"]}
+    assert tasks[implementer["id"]]["status"] == "accepted"
+    assert tasks[reviewer["id"]]["status"] == "running"
+
+
+def test_run_snapshot_reports_tasks_agents_handoffs_and_gates(tmp_path):
+    from routes.orchestration_routes import setup_orchestration_routes
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    client = _client(setup_orchestration_routes(store))
+
+    run = client.post("/api/orchestration/runs", json={"goal": "Snapshot"}).json()["run"]
+    implementer, reviewer = run["plan_graph"]["tasks"][:2]
+    client.post(f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/start", json={"session_id": "s1"})
+    handoff = client.post(
+        "/api/orchestration/handoffs",
+        json={
+            "run_id": run["id"],
+            "from_task_id": implementer["id"],
+            "to_task_id": reviewer["id"],
+            "from_profile_id": implementer["profile_id"],
+            "to_profile_id": reviewer["profile_id"],
+            "summary": "Snapshot handoff",
+            "evidence": [{"kind": "test", "ref": "green"}],
+        },
+    ).json()["handoff"]
+    client.post(
+        "/api/orchestration/quality-gates",
+        json={
+            "run_id": run["id"],
+            "task_id": reviewer["id"],
+            "evidence": [{"kind": "test"}],
+            "changed_files": ["a.py"],
+            "allowed_files": ["a.py"],
+            "context_budget": {"proof": True},
+            "mount_policy": {"respected": True},
+        },
+    )
+
+    snapshot = client.get(f"/api/orchestration/runs/{run['id']}/snapshot").json()["snapshot"]
+    assert snapshot["run"]["id"] == run["id"]
+    assert snapshot["active_tasks"][0]["id"] == implementer["id"]
+    assert snapshot["agents"][0]["profile"]["display_name"] == "Alice"
+    assert snapshot["handoffs"][0]["id"] == handoff["id"]
+    assert snapshot["quality_gates"][0]["passed"] is True
+    assert snapshot["blocked_tasks"] == []
+
+
 def test_disabled_profile_cannot_receive_new_run_tasks(tmp_path):
     from routes.orchestration_routes import setup_orchestration_routes
     from src.orchestration.store import OrchestrationStore
