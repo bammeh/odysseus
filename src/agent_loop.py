@@ -26,6 +26,7 @@ from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
+from src.orchestration.context import format_orchestration_context
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -2562,6 +2563,7 @@ async def stream_agent_loop(
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
     uploaded_files: Optional[List[Dict]] = None,
+    orchestration_context: Optional[Dict] = None,
     workload: str = "foreground",
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
@@ -2602,6 +2604,7 @@ async def stream_agent_loop(
     _upload_msg = _uploaded_files_context_message(uploaded_files)
     if _upload_msg:
         messages = _insert_before_latest_user(messages, _upload_msg)
+    _orchestration_msg = format_orchestration_context(orchestration_context)
 
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
@@ -3138,6 +3141,8 @@ async def stream_agent_loop(
             messages[0]["content"] = GUIDE_ONLY_DIRECTIVE + "\n\n" + (messages[0].get("content") or "")
         else:
             messages.insert(0, {"role": "system", "content": GUIDE_ONLY_DIRECTIVE})
+    if _orchestration_msg:
+        messages = _insert_before_latest_user(messages, _orchestration_msg)
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()

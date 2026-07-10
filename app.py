@@ -783,7 +783,10 @@ from routes.context_routes import setup_context_routes
 app.include_router(setup_context_routes())
 
 from routes.orchestration_routes import setup_orchestration_routes
-app.include_router(setup_orchestration_routes())
+from src.orchestration import OrchestrationStore
+orchestration_store = OrchestrationStore()
+app.state.orchestration_store = orchestration_store
+app.include_router(setup_orchestration_routes(orchestration_store))
 
 from routes.job_routes import setup_job_routes
 app.include_router(setup_job_routes())

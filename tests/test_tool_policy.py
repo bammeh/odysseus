@@ -150,6 +150,108 @@ def test_agent_loop_forced_web_tools_filtered_by_disabled_tools(monkeypatch):
     assert WEB_TOOL_NAMES.isdisjoint(_schema_names(sent_tools[0]))
 
 
+def test_agent_loop_injects_orchestration_context_before_latest_user(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_messages = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_messages.append(messages)
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [
+                {"role": "user", "content": "older task note"},
+                {"role": "assistant", "content": "ack"},
+                {"role": "user", "content": "continue the assigned task"},
+            ],
+            max_rounds=1,
+            relevant_tools=set(),
+            orchestration_context={
+                "run_id": "run-123",
+                "task_id": "task-456",
+                "identity": {
+                    "profile_id": "builtin-alice",
+                    "agent_instance_id": "agent-789",
+                    "role": "implementer",
+                    "namespace": "owner/run-123/task-456",
+                    "scope": {"workspace_id": "mount-1", "paths": ["src/orchestration"]},
+                    "session_id": "session-abc",
+                },
+                "agent_profile": {
+                    "display_name": "Alice",
+                    "role": "implementer",
+                    "instructions": "Implement scoped tasks only.",
+                },
+                "capsules": [
+                    {"type": "plan_graph_state", "content": {"status": "running"}},
+                    {"type": "handoff_summary", "content": {"inbox": []}},
+                ],
+            },
+        )
+    )
+
+    assert sent_messages
+    contents = [msg.get("content", "") for msg in sent_messages[0]]
+    latest_user_index = next(
+        idx for idx, msg in enumerate(sent_messages[0])
+        if msg.get("role") == "user" and msg.get("content") == "continue the assigned task"
+    )
+    context_index = next(
+        idx for idx, content in enumerate(contents)
+        if "## Orchestration Task Context" in str(content)
+    )
+
+    assert context_index == latest_user_index - 1
+    injected = str(contents[context_index])
+    assert "Agent: Alice (implementer)" in injected
+    assert "Run: run-123" in injected
+    assert "Task: task-456" in injected
+    assert "Agent instance: agent-789" in injected
+    assert "Namespace: owner/run-123/task-456" in injected
+    assert "plan_graph_state" in injected
+    assert "Stay inside the assigned task scope" in injected
+
+
+def test_agent_loop_orchestration_context_skips_direct_low_signal_path(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_messages = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_messages.append(messages)
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [{"role": "user", "content": "ok"}],
+            max_rounds=1,
+            relevant_tools=set(),
+            orchestration_context={
+                "run_id": "run-low",
+                "task_id": "task-low",
+                "identity": {"role": "implementer", "agent_instance_id": "agent-low"},
+                "agent_profile": {"display_name": "Alice", "role": "implementer"},
+            },
+        )
+    )
+
+    assert sent_messages
+    assert any(
+        "## Orchestration Task Context" in str(msg.get("content", ""))
+        for msg in sent_messages[0]
+    )
+
+
 def test_agent_loop_policy_blocks_disabled_web_tool_call_before_execution(monkeypatch):
     _patch_loop_basics(monkeypatch)
     called = False

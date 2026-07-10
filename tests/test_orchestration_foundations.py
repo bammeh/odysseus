@@ -356,6 +356,34 @@ def test_run_snapshot_reports_tasks_agents_handoffs_and_gates(tmp_path):
     assert snapshot["blocked_tasks"] == []
 
 
+def test_chat_route_resolves_orchestration_context_and_attaches_session(tmp_path):
+    from types import SimpleNamespace
+
+    from routes.chat_routes import _resolve_request_orchestration_context
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    run = store.create_run("alice", {"goal": "Wire chat task context"})
+    task = run["plan_graph"]["tasks"][0]
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(orchestration_store=store)))
+
+    context = _resolve_request_orchestration_context(
+        request,
+        owner="alice",
+        run_id=run["id"],
+        task_id=task["id"],
+        session_id="session-123",
+        workspace_scope={"workspace": "G:/Programming/GitHub/odysseus"},
+    )
+
+    assert context["run_id"] == run["id"]
+    assert context["task_id"] == task["id"]
+    assert context["agent_profile"]["display_name"] == "Alice"
+    assert context["identity"]["session_id"] == "session-123"
+    assert context["identity"]["scope"]["workspace"] == "G:/Programming/GitHub/odysseus"
+    assert context["capsules"][0]["kind"] == "agent_profile"
+
+
 def test_disabled_profile_cannot_receive_new_run_tasks(tmp_path):
     from routes.orchestration_routes import setup_orchestration_routes
     from src.orchestration.store import OrchestrationStore

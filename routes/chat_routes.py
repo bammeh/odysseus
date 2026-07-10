@@ -168,6 +168,66 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     return workspace, (requested if not workspace else "")
 
 
+def _resolve_request_orchestration_context(
+    request,
+    owner: str | None,
+    run_id: str | None,
+    task_id: str | None,
+    session_id: str | None,
+    workspace_scope: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    run_id = str(run_id or "").strip()
+    task_id = str(task_id or "").strip()
+    if not run_id and not task_id:
+        return None
+    if not run_id or not task_id:
+        raise HTTPException(400, "Both orchestration_run_id and orchestration_task_id are required.")
+    try:
+        from src.orchestration import OrchestrationStore
+        from src.orchestration.store import OrchestrationError
+
+        store = getattr(getattr(request.app, "state", None), "orchestration_store", None)
+        if store is None:
+            store = OrchestrationStore()
+            setattr(request.app.state, "orchestration_store", store)
+        payload: Dict[str, Any] = {}
+        if session_id:
+            payload["session_id"] = session_id
+        if workspace_scope:
+            payload["scope"] = dict(workspace_scope)
+        try:
+            task = store.start_task(owner, run_id, task_id, payload)
+        except OrchestrationError as exc:
+            if "invalid transition" not in str(exc):
+                raise
+            task = store.attach_task_session(owner, run_id, task_id, session_id or "")
+        raw_context = store.task_context(owner, run_id, task_id)
+        identity = dict(raw_context.get("agent_identity") or {})
+        profile = {}
+        for capsule in raw_context.get("capsules") or []:
+            if capsule.get("kind") == "agent_profile":
+                profile = dict(capsule.get("profile") or {})
+                break
+        if task.get("scope"):
+            identity["scope"] = task.get("scope")
+        if task.get("session_id"):
+            identity["session_id"] = task.get("session_id")
+        return {
+            "run_id": run_id,
+            "task_id": task_id,
+            "identity": identity,
+            "agent_profile": profile,
+            "capsules": raw_context.get("capsules") or [],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if exc.__class__.__name__ == "OrchestrationError":
+            raise HTTPException(400, str(exc))
+        logger.warning("[orchestration] failed to resolve task context: %s", exc)
+        raise HTTPException(400, "Invalid orchestration task context.")
+
+
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
@@ -573,6 +633,9 @@ def setup_chat_routes(
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
         )
+        orchestration_run_id = form_data.get("orchestration_run_id") or (body or {}).get("orchestration_run_id")
+        orchestration_task_id = form_data.get("orchestration_task_id") or (body or {}).get("orchestration_task_id")
+        orchestration_context = None
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -929,6 +992,14 @@ def setup_chat_routes(
         # Enforce per-user privileges
         _privs = {}
         _user = ctx.user
+        orchestration_context = _resolve_request_orchestration_context(
+            request,
+            owner=_user,
+            run_id=orchestration_run_id,
+            task_id=orchestration_task_id,
+            session_id=session,
+            workspace_scope={"workspace": workspace} if workspace else None,
+        )
         if _user and hasattr(request.app.state, 'auth_manager') and request.app.state.auth_manager:
             _privs = request.app.state.auth_manager.get_privileges(_user)
         if _privs:
@@ -1429,6 +1500,7 @@ def setup_chat_routes(
                         workspace=workspace or None,
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
+                        orchestration_context=orchestration_context,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
