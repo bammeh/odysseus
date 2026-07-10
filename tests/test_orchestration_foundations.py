@@ -312,6 +312,113 @@ def test_handoff_review_accepts_or_rejects_with_evidence(tmp_path):
     assert tasks[reviewer["id"]]["status"] == "running"
 
 
+def test_reflector_review_detects_scope_and_evidence_drift(tmp_path):
+    from routes.orchestration_routes import setup_orchestration_routes
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    client = _client(setup_orchestration_routes(store))
+
+    run = client.post("/api/orchestration/runs", json={"goal": "Reflector review"}).json()["run"]
+    implementer, reviewer = run["plan_graph"]["tasks"][:2]
+    client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/start",
+        json={"scope": {"files": ["src/orchestration/store.py", "tests/test_orchestration_foundations.py"]}},
+    )
+    handoff = client.post(
+        "/api/orchestration/handoffs",
+        json={
+            "run_id": run["id"],
+            "from_task_id": implementer["id"],
+            "to_task_id": reviewer["id"],
+            "summary": "Ready but missing evidence",
+            "evidence": [],
+        },
+    ).json()["handoff"]
+
+    response = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/reflector-review",
+        json={
+            "reviewer_profile_id": reviewer["profile_id"],
+            "changed_files": [
+                "src/orchestration/store.py",
+                "src/unrelated.py",
+            ],
+            "handoff_id": handoff["id"],
+            "tool_result_contracts": [
+                {"tool": "grep", "output_hash": "abc", "truncated": False},
+                {"tool": "edit_file", "truncated": False},
+            ],
+            "context_budget": {"proof": True},
+            "mount_policy": {"respected": True},
+            "notes": "Reflector caught drift.",
+        },
+    )
+
+    assert response.status_code == 200
+    review = response.json()["review"]
+    assert review["passed"] is False
+    gates = {gate["name"]: gate for gate in review["gates"]}
+    assert gates["scope_guard"]["status"] == "fail"
+    assert "src/unrelated.py" in gates["scope_guard"]["details"]["outside_scope"]
+    assert gates["handoff_evidence"]["status"] == "fail"
+    assert gates["tool_result_contracts"]["status"] == "fail"
+    assert gates["context_budget"]["status"] == "pass"
+    assert review["system_owned"] is True
+    assert review["reviewer_profile_id"] == reviewer["profile_id"]
+
+    snapshot = client.get(f"/api/orchestration/runs/{run['id']}/snapshot").json()["snapshot"]
+    assert snapshot["reflector_reviews"][0]["id"] == review["id"]
+    tasks = {task["id"]: task for task in snapshot["run"]["plan_graph"]["tasks"]}
+    assert tasks[implementer["id"]]["quality_gate_status"] == "failed"
+
+
+def test_reflector_review_passes_when_scope_handoff_and_contracts_are_valid(tmp_path):
+    from routes.orchestration_routes import setup_orchestration_routes
+    from src.orchestration.store import OrchestrationStore
+
+    store = OrchestrationStore(tmp_path / "orchestration.json")
+    client = _client(setup_orchestration_routes(store))
+
+    run = client.post("/api/orchestration/runs", json={"goal": "Reflector pass"}).json()["run"]
+    implementer, reviewer = run["plan_graph"]["tasks"][:2]
+    client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/start",
+        json={"scope": {"files": ["src/orchestration/store.py", "tests/"]}},
+    )
+    handoff = client.post(
+        "/api/orchestration/handoffs",
+        json={
+            "run_id": run["id"],
+            "from_task_id": implementer["id"],
+            "to_task_id": reviewer["id"],
+            "summary": "Ready with evidence",
+            "evidence": [{"kind": "test", "ref": "pytest"}],
+        },
+    ).json()["handoff"]
+
+    review = client.post(
+        f"/api/orchestration/runs/{run['id']}/tasks/{implementer['id']}/reflector-review",
+        json={
+            "reviewer_profile_id": reviewer["profile_id"],
+            "changed_files": ["src/orchestration/store.py", "tests/test_orchestration_foundations.py"],
+            "handoff_id": handoff["id"],
+            "tool_result_contracts": [
+                {"tool": "grep", "output_hash": "abc", "truncated": False},
+                {"tool": "pytest", "output_hash": "def", "truncated": False},
+            ],
+            "context_budget": {"proof": True},
+            "mount_policy": {"respected": True},
+        },
+    ).json()["review"]
+
+    assert review["passed"] is True
+    assert {gate["status"] for gate in review["gates"]} == {"pass"}
+    snapshot = client.get(f"/api/orchestration/runs/{run['id']}/snapshot").json()["snapshot"]
+    tasks = {task["id"]: task for task in snapshot["run"]["plan_graph"]["tasks"]}
+    assert tasks[implementer["id"]]["quality_gate_status"] == "passed"
+
+
 def test_run_snapshot_reports_tasks_agents_handoffs_and_gates(tmp_path, monkeypatch):
     from routes.orchestration_routes import setup_orchestration_routes
     from src import bg_jobs

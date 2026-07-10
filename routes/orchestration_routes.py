@@ -122,6 +122,13 @@ def setup_orchestration_routes(store: OrchestrationStore | None = None) -> APIRo
         except OrchestrationError as exc:
             raise _handle_error(exc)
 
+    @router.post("/runs/{run_id}/tasks/{task_id}/reflector-review")
+    async def reflector_review(run_id: str, task_id: str, request: Request):
+        try:
+            return {"review": store.reflector_review(_owner(request), run_id, task_id, await _json(request))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
     @router.post("/handoffs")
     async def create_handoff(request: Request):
         try:

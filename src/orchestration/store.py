@@ -478,6 +478,93 @@ class OrchestrationStore:
         self._save()
         return copy.deepcopy(result)
 
+    def reflector_review(self, owner: str | None, run_id: str, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        owner_key = _owner_key(owner)
+        run = self._require_run(run_id, owner_key)
+        task = self._require_task(run, task_id)
+        reviewer_profile_id = str(payload.get("reviewer_profile_id") or "")
+        if reviewer_profile_id:
+            self._require_enabled_profile(reviewer_profile_id, owner_key)
+
+        changed_files = [str(path) for path in payload.get("changed_files") or []]
+        allowed_files = [
+            str(path)
+            for path in (payload.get("allowed_files") or task.get("scope", {}).get("files") or [])
+        ]
+        outside_scope = self._outside_scope(changed_files, allowed_files)
+
+        handoff = None
+        handoff_id = str(payload.get("handoff_id") or "")
+        if handoff_id:
+            handoff = self._require_handoff(handoff_id, owner_key)
+            if handoff.get("run_id") != run_id:
+                raise OrchestrationError("handoff does not belong to run")
+            if task_id not in {handoff.get("from_task_id"), handoff.get("to_task_id")}:
+                raise OrchestrationError("handoff does not reference task")
+        handoff_evidence = list((handoff or {}).get("evidence") or payload.get("handoff_evidence") or [])
+
+        contracts = [dict(contract) for contract in payload.get("tool_result_contracts") or []]
+        invalid_contracts = [
+            contract
+            for contract in contracts
+            if not contract.get("tool") or not contract.get("output_hash") or contract.get("truncated") is True
+        ]
+        gates = [
+            {
+                "name": "scope_guard",
+                "status": "pass" if not outside_scope else "fail",
+                "details": {"changed_files": changed_files, "allowed_files": allowed_files, "outside_scope": outside_scope},
+            },
+            {
+                "name": "handoff_evidence",
+                "status": "pass" if handoff_evidence else "fail",
+                "details": {"handoff_id": handoff_id, "evidence_count": len(handoff_evidence)},
+            },
+            {
+                "name": "tool_result_contracts",
+                "status": "pass" if contracts and not invalid_contracts else "fail",
+                "details": {"contract_count": len(contracts), "invalid_contracts": invalid_contracts},
+            },
+            {
+                "name": "context_budget",
+                "status": "pass" if (payload.get("context_budget") or {}).get("proof") else "fail",
+                "details": copy.deepcopy(payload.get("context_budget") or {}),
+            },
+            {
+                "name": "mount_policy",
+                "status": "pass" if (payload.get("mount_policy") or {}).get("respected") else "fail",
+                "details": copy.deepcopy(payload.get("mount_policy") or {}),
+            },
+        ]
+        review = {
+            "id": _new_id("reflector"),
+            "owner": owner_key,
+            "run_id": run_id,
+            "task_id": task_id,
+            "reviewer_profile_id": reviewer_profile_id,
+            "system_owned": True,
+            "passed": all(gate["status"] == "pass" for gate in gates),
+            "gates": gates,
+            "notes": str(payload.get("notes") or ""),
+            "created_at": _now(),
+        }
+        self._state["reflector_reviews"][review["id"]] = review
+        self._state["quality_gates"][review["id"]] = {
+            "id": review["id"],
+            "owner": owner_key,
+            "run_id": run_id,
+            "task_id": task_id,
+            "kind": "reflector_review",
+            "passed": review["passed"],
+            "gates": copy.deepcopy(gates),
+            "created_at": review["created_at"],
+        }
+        task["quality_gate_status"] = "passed" if review["passed"] else "failed"
+        self._append_status(task, "reflector_passed" if review["passed"] else "reflector_failed", review["notes"])
+        run["updated_at"] = _now()
+        self._save()
+        return copy.deepcopy(review)
+
     def snapshot(self, owner: str | None, run_id: str) -> dict[str, Any]:
         owner_key = _owner_key(owner)
         run = self._require_run(run_id, owner_key)
@@ -534,6 +621,11 @@ class OrchestrationStore:
                 for gate in self._state["quality_gates"].values()
                 if gate.get("run_id") == run_id
             ],
+            "reflector_reviews": [
+                copy.deepcopy(review)
+                for review in self._state["reflector_reviews"].values()
+                if review.get("run_id") == run_id
+            ],
         }
 
     def _load(self) -> dict[str, Any]:
@@ -547,10 +639,18 @@ class OrchestrationStore:
                         "runs": dict(data.get("runs") or {}),
                         "handoffs": dict(data.get("handoffs") or {}),
                         "quality_gates": dict(data.get("quality_gates") or {}),
+                        "reflector_reviews": dict(data.get("reflector_reviews") or {}),
                     }
         except (OSError, json.JSONDecodeError):
             pass
-        return {"profiles": {}, "teams": {}, "runs": {}, "handoffs": {}, "quality_gates": {}}
+        return {
+            "profiles": {},
+            "teams": {},
+            "runs": {},
+            "handoffs": {},
+            "quality_gates": {},
+            "reflector_reviews": {},
+        }
 
     def _save(self) -> None:
         atomic_write_json(str(self.path), self._state, indent=2)
@@ -648,6 +748,22 @@ class OrchestrationStore:
             if task.get("id") == task_id:
                 return task
         return None
+
+    @staticmethod
+    def _outside_scope(changed_files: list[str], allowed_files: list[str]) -> list[str]:
+        if not allowed_files:
+            return list(changed_files)
+        normalized_allowed = [path.replace("\\", "/").strip() for path in allowed_files if str(path).strip()]
+        outside: list[str] = []
+        for changed in changed_files:
+            normalized = changed.replace("\\", "/").strip()
+            if not any(
+                normalized == allowed
+                or (allowed.endswith("/") and normalized.startswith(allowed))
+                for allowed in normalized_allowed
+            ):
+                outside.append(changed)
+        return outside
 
     @staticmethod
     def _heartbeat_for_status(status: str) -> str:
