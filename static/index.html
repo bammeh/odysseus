@@ -2325,6 +2325,17 @@
             </div>
             <div class="admin-card">
               <h2>Team Cards</h2>
+              <div class="settings-col" style="gap:8px;margin-bottom:10px;">
+                <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+                  <input id="settings-orchestration-team-name" class="settings-select" type="text" placeholder="Team name" style="flex:1;min-width:180px;">
+                  <button type="button" class="admin-btn-add" id="settings-orchestration-team-create-btn">Create Team</button>
+                </div>
+                <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+                  <select id="settings-orchestration-team-implementer" class="settings-select" style="min-width:170px;"></select>
+                  <select id="settings-orchestration-team-reviewer" class="settings-select" style="min-width:170px;"></select>
+                  <select id="settings-orchestration-team-integrator" class="settings-select" style="min-width:170px;"></select>
+                </div>
+              </div>
               <div id="settings-orchestration-team-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
             </div>
             <div class="admin-card">

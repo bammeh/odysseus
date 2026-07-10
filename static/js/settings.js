@@ -2351,6 +2351,7 @@ function initAll() {
 let _pluginsLoaded = false;
 let _orchestrationLoaded = false;
 let _orchestrationTemplates = [];
+let _orchestrationProfiles = [];
 
 async function _fetchSettingsJson(url, options = {}) {
   const res = await fetch(url, {
@@ -2447,9 +2448,10 @@ function _profileActions(profile) {
 }
 
 function _renderOrchestrationProfiles(profiles) {
+  _orchestrationProfiles = Array.isArray(profiles) ? profiles : [];
   _setOrchestrationList(
     'settings-orchestration-profile-list',
-    profiles || [],
+    _orchestrationProfiles,
     'No agent profiles.',
     profile => _orchestrationRow(
       profile.display_name || profile.name || profile.id,
@@ -2459,6 +2461,61 @@ function _renderOrchestrationProfiles(profiles) {
     ),
   );
   _bindOrchestrationProfileActions();
+  _renderOrchestrationTeamProfileOptions();
+}
+
+function _teamActions(team) {
+  const teamId = esc(team.id || '');
+  const duplicate = `<button type="button" class="admin-btn-sm settings-orchestration-team-duplicate" data-team-id="${teamId}">Duplicate</button>`;
+  if (team.builtin || team.read_only) return duplicate;
+  const enabled = team.enabled !== false;
+  const toggle = `<button type="button" class="admin-btn-sm settings-orchestration-team-toggle" data-team-id="${teamId}" data-enabled="${enabled ? '0' : '1'}">${enabled ? 'Disable' : 'Enable'}</button>`;
+  const remove = `<button type="button" class="admin-btn-sm settings-orchestration-team-delete" data-team-id="${teamId}">Delete</button>`;
+  return `${duplicate}${toggle}${remove}`;
+}
+
+function _teamMemberSummary(team) {
+  const members = Array.isArray(team.members) ? team.members : [];
+  if (!members.length) return '0 members';
+  const namesById = new Map(_orchestrationProfiles.map(profile => [profile.id, profile.display_name || profile.id]));
+  return members.map(member => {
+    const name = namesById.get(member.profile_id) || member.profile_id;
+    return `${member.slot || 'member'}: ${name}`;
+  }).join(' | ');
+}
+
+function _renderOrchestrationTeams(teams) {
+  _setOrchestrationList(
+    'settings-orchestration-team-list',
+    teams || [],
+    'No team cards.',
+    team => _orchestrationRow(
+      team.display_name || team.name || team.id,
+      _teamMemberSummary(team),
+      team.enabled === false ? 'disabled' : (team.builtin ? 'built-in' : 'custom'),
+      _teamActions(team),
+    ),
+  );
+  _bindOrchestrationTeamActions();
+}
+
+function _renderOrchestrationTeamProfileOptions() {
+  const roles = [
+    ['settings-orchestration-team-implementer', 'implementer', 'Implementer'],
+    ['settings-orchestration-team-reviewer', 'reviewer', 'Reviewer'],
+    ['settings-orchestration-team-integrator', 'integrator', 'Integrator'],
+  ];
+  roles.forEach(([id, role, label]) => {
+    const select = el(id);
+    if (!select) return;
+    const candidates = _orchestrationProfiles.filter(profile => profile.enabled !== false);
+    const preferred = candidates.find(profile => profile.role === role);
+    const options = candidates.map(profile => {
+      const selected = preferred && profile.id === preferred.id ? ' selected' : '';
+      return `<option value="${esc(profile.id)}"${selected}>${esc(label)}: ${esc(profile.display_name || profile.id)}</option>`;
+    });
+    select.innerHTML = options.length ? options.join('') : `<option value="">${esc(label)}: none</option>`;
+  });
 }
 
 async function renderOrchestrationSettings(force = false) {
@@ -2491,16 +2548,7 @@ async function renderOrchestrationSettings(force = false) {
 
     _renderOrchestrationProfileTemplates(templatesData.templates || []);
     _renderOrchestrationProfiles(profilesData.profiles || []);
-    _setOrchestrationList(
-      'settings-orchestration-team-list',
-      teamsData.teams || [],
-      'No team cards.',
-      team => _orchestrationRow(
-        team.display_name || team.name || team.id,
-        `${(team.members || team.profile_ids || []).length} members`,
-        team.default === true ? 'default' : '',
-      ),
-    );
+    _renderOrchestrationTeams(teamsData.teams || []);
     _setOrchestrationList(
       'settings-orchestration-run-list',
       runsData.runs || [],
@@ -2564,6 +2612,7 @@ async function renderOrchestrationSettings(force = false) {
 function initOrchestrationSettings() {
   const refreshBtn = el('settings-orchestration-refresh-btn');
   const createBtn = el('settings-orchestration-profile-create-btn');
+  const createTeamBtn = el('settings-orchestration-team-create-btn');
   if (refreshBtn && refreshBtn.dataset.bound !== '1') {
     refreshBtn.dataset.bound = '1';
     refreshBtn.addEventListener('click', () => renderOrchestrationSettings(true));
@@ -2571,6 +2620,10 @@ function initOrchestrationSettings() {
   if (createBtn && createBtn.dataset.bound !== '1') {
     createBtn.dataset.bound = '1';
     createBtn.addEventListener('click', () => createOrchestrationProfile());
+  }
+  if (createTeamBtn && createTeamBtn.dataset.bound !== '1') {
+    createTeamBtn.dataset.bound = '1';
+    createTeamBtn.addEventListener('click', () => createOrchestrationTeam());
   }
 }
 
@@ -2658,6 +2711,101 @@ function _bindOrchestrationProfileActions() {
   });
   root.querySelectorAll('.settings-orchestration-profile-delete').forEach(btn => {
     btn.addEventListener('click', () => deleteOrchestrationProfile(btn.dataset.profileId));
+  });
+}
+
+async function createOrchestrationTeam() {
+  const nameInput = el('settings-orchestration-team-name');
+  const implementer = el('settings-orchestration-team-implementer');
+  const reviewer = el('settings-orchestration-team-reviewer');
+  const integrator = el('settings-orchestration-team-integrator');
+  const msg = el('settings-orchestration-msg');
+  const name = nameInput ? nameInput.value.trim() : '';
+  if (!name) {
+    if (msg) msg.textContent = 'Enter a team name.';
+    return;
+  }
+  const members = [
+    { profile_id: implementer?.value || '', slot: 'implementer' },
+    { profile_id: reviewer?.value || '', slot: 'reviewer' },
+    { profile_id: integrator?.value || '', slot: 'integrator' },
+  ].filter(member => member.profile_id);
+  try {
+    if (msg) msg.textContent = 'Creating team...';
+    await _fetchSettingsJson('/api/orchestration/teams', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        members,
+        routing_rules: {
+          implementer: ['implement', 'edit', 'test'],
+          reviewer: ['review', 'verify'],
+          integrator: ['integrate', 'release'],
+        },
+        enabled: true,
+      }),
+    });
+    if (nameInput) nameInput.value = '';
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to create team.';
+  }
+}
+
+async function duplicateOrchestrationTeam(teamId) {
+  const msg = el('settings-orchestration-msg');
+  try {
+    if (msg) msg.textContent = 'Duplicating team...';
+    await _fetchSettingsJson(`/api/orchestration/teams/${teamId}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to duplicate team.';
+  }
+}
+
+async function toggleOrchestrationTeam(teamId, enabled) {
+  const msg = el('settings-orchestration-msg');
+  try {
+    if (msg) msg.textContent = 'Updating team...';
+    await _fetchSettingsJson(`/api/orchestration/teams/${teamId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: !!enabled }),
+    });
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to update team.';
+  }
+}
+
+async function deleteOrchestrationTeam(teamId) {
+  const msg = el('settings-orchestration-msg');
+  try {
+    if (msg) msg.textContent = 'Deleting team...';
+    await _fetchSettingsJson(`/api/orchestration/teams/${teamId}`, { method: 'DELETE' });
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to delete team.';
+  }
+}
+
+function _bindOrchestrationTeamActions() {
+  const root = el('settings-orchestration-team-list');
+  if (!root) return;
+  root.querySelectorAll('.settings-orchestration-team-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => duplicateOrchestrationTeam(btn.dataset.teamId));
+  });
+  root.querySelectorAll('.settings-orchestration-team-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleOrchestrationTeam(btn.dataset.teamId, btn.dataset.enabled === '1'));
+  });
+  root.querySelectorAll('.settings-orchestration-team-delete').forEach(btn => {
+    btn.addEventListener('click', () => deleteOrchestrationTeam(btn.dataset.teamId));
   });
 }
 

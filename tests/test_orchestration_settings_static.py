@@ -16,6 +16,11 @@ def test_settings_has_orchestration_admin_tab_and_panel():
     assert 'id="settings-orchestration-profile-template"' in html
     assert 'id="settings-orchestration-profile-create-btn"' in html
     assert 'id="settings-orchestration-team-list"' in html
+    assert 'id="settings-orchestration-team-name"' in html
+    assert 'id="settings-orchestration-team-implementer"' in html
+    assert 'id="settings-orchestration-team-reviewer"' in html
+    assert 'id="settings-orchestration-team-integrator"' in html
+    assert 'id="settings-orchestration-team-create-btn"' in html
     assert 'id="settings-orchestration-run-list"' in html
     assert 'id="settings-orchestration-job-list"' in html
     assert 'id="settings-orchestration-mount-list"' in html
@@ -32,10 +37,15 @@ def test_settings_js_initializes_orchestration_tab():
     assert "duplicateOrchestrationProfile" in js
     assert "toggleOrchestrationProfile" in js
     assert "deleteOrchestrationProfile" in js
+    assert "createOrchestrationTeam" in js
+    assert "duplicateOrchestrationTeam" in js
+    assert "toggleOrchestrationTeam" in js
+    assert "deleteOrchestrationTeam" in js
     assert "/api/orchestration/profiles" in js
     assert "/api/orchestration/profile-templates" in js
     assert "/api/orchestration/profiles/${profileId}/duplicate" in js
     assert "/api/orchestration/teams" in js
+    assert "/api/orchestration/teams/${teamId}/duplicate" in js
     assert "/api/orchestration/runs" in js
     assert "/api/jobs" in js
     assert "/api/workspaces/mounts" in js
