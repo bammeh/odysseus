@@ -16,6 +16,10 @@ my_plugin/
   panel.html
 ```
 
+See `examples/plugins/demo_plugin` for a complete plugin that passes policy validation and exercises a panel, FastAPI route, and agent tool.
+
+Agents creating plugins should read `docs/agents/plugin-authoring.md`; repo-level guidance also points to this from `AGENTS.md`.
+
 `odysseus.plugin.json`:
 
 ```json
@@ -115,6 +119,16 @@ window.odysseusPlugins.openPanel('my_plugin', 'main')
 ```
 
 Panels are movable/resizable Odysseus windows containing sandboxed iframes.
+
+Panels can communicate with Odysseus through a narrow `postMessage` bridge. Supported actions are:
+
+- `toast` - show an Odysseus toast.
+- `resize` - request a bounded panel size.
+- `close` - close the panel.
+- `refresh` - reload the panel iframe.
+- `pluginApi` - call this plugin's own `/api/plugins/{plugin_id}/...` routes.
+
+The bridge only accepts messages from the iframe belonging to the panel and `pluginApi` URLs must stay inside the panel's own plugin namespace.
 
 ## Capability Boundaries
 

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Plugin</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 18px;
+      background: #101318;
+      color: #f5f7fb;
+    }
+    main {
+      display: grid;
+      gap: 14px;
+      max-width: 720px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+    }
+    p {
+      margin: 0;
+      color: #aab3c2;
+      line-height: 1.5;
+    }
+    button {
+      width: fit-content;
+      border: 1px solid #4f8cff;
+      background: transparent;
+      color: #f5f7fb;
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    pre {
+      min-height: 64px;
+      margin: 0;
+      padding: 12px;
+      border-radius: 6px;
+      background: #171c24;
+      color: #cde2ff;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Demo Plugin</h1>
+    <p>This framed panel is served from the plugin static directory and loaded in a sandboxed Odysseus window.</p>
+    <button id="health-btn" type="button">Check Plugin Route</button>
+    <pre id="output">Route output will appear here.</pre>
+  </main>
+  <script>
+    let bridgeSeq = 0;
+    const pending = new Map();
+
+    window.addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type !== 'odysseus:plugin' || data.version !== 1 || !data.requestId) return;
+      const callbacks = pending.get(data.requestId);
+      if (!callbacks) return;
+      pending.delete(data.requestId);
+      if (data.ok) callbacks.resolve(data.payload);
+      else callbacks.reject(new Error((data.payload && data.payload.error) || 'Plugin bridge request failed'));
+    });
+
+    function pluginBridge(action, payload) {
+      const requestId = `demo-${++bridgeSeq}`;
+      const message = {
+        type: 'odysseus:plugin',
+        version: 1,
+        requestId,
+        action,
+        payload: payload || {}
+      };
+      return new Promise((resolve, reject) => {
+        pending.set(requestId, { resolve, reject });
+        window.parent.postMessage(message, '*');
+        setTimeout(() => {
+          if (!pending.has(requestId)) return;
+          pending.delete(requestId);
+          reject(new Error('Plugin bridge timed out'));
+        }, 10000);
+      });
+    }
+
+    document.getElementById('health-btn').addEventListener('click', async () => {
+      const out = document.getElementById('output');
+      out.textContent = 'Loading...';
+      try {
+        const res = await pluginBridge('pluginApi', {
+          method: 'GET',
+          url: '/api/plugins/demo_plugin/health'
+        });
+        out.textContent = JSON.stringify(res.body, null, 2);
+        await pluginBridge('toast', { message: 'Demo plugin route responded.' });
+      } catch (err) {
+        out.textContent = String(err && err.message || err);
+      }
+    });
+  </script>
+</body>
+</html>

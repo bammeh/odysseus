@@ -776,6 +776,20 @@ app.include_router(setup_cookbook_routes())
 
 from routes.workspace_routes import setup_workspace_routes
 app.include_router(setup_workspace_routes())
+from routes.workspace_mount_routes import setup_workspace_mount_routes
+app.include_router(setup_workspace_mount_routes())
+
+from routes.context_routes import setup_context_routes
+app.include_router(setup_context_routes())
+
+from routes.orchestration_routes import setup_orchestration_routes
+app.include_router(setup_orchestration_routes())
+
+from routes.job_routes import setup_job_routes
+app.include_router(setup_job_routes())
+
+from routes.memory_graph_routes import setup_memory_graph_routes
+app.include_router(setup_memory_graph_routes(memory_manager, memory_vector))
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes

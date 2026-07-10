@@ -1,0 +1,37 @@
+{
+  "id": "demo_plugin",
+  "name": "Demo Plugin",
+  "version": "1.0.0",
+  "description": "Example Odysseus plugin with one panel, one route, and one agent tool.",
+  "author": "Odysseus",
+  "entrypoint": "plugin.py",
+  "permissions": ["network:http"],
+  "dependencies": [],
+  "panels": [
+    {
+      "id": "main",
+      "title": "Demo Plugin",
+      "path": "panel.html",
+      "icon": "plug",
+      "width": 760,
+      "height": 520
+    }
+  ],
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Echo text back to the agent with plugin metadata.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to echo."
+          }
+        },
+        "required": ["text"]
+      },
+      "read_only": true
+    }
+  ]
+}

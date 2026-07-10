@@ -21,3 +21,16 @@ def test_settings_js_initializes_plugins_tab():
     assert "renderPluginSettings" in js
     assert "/api/plugins" in js
     assert "odysseusPlugins.openPanel" in js
+
+
+def test_plugin_panel_bridge_is_exposed_and_namespaced():
+    js = (ROOT / "static" / "js" / "plugins.js").read_text(encoding="utf-8")
+    html = (ROOT / "examples" / "plugins" / "demo_plugin" / "panel.html").read_text(encoding="utf-8")
+
+    assert "odysseus:plugin" in js
+    assert "handlePluginBridgeMessage" in js
+    assert "pluginApi" in js
+    assert "event.source !== panel.iframe.contentWindow" in js
+    assert "url.startsWith(`/api/plugins/${pluginId}/`)" in js
+    assert "window.parent.postMessage" in html
+    assert "odysseus:plugin" in html
