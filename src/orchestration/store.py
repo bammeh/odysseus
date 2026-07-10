@@ -233,10 +233,8 @@ class OrchestrationStore:
         name = str(payload.get("name") or "").strip()
         if not name:
             raise OrchestrationError("name is required")
-        members = [dict(member) for member in payload.get("members") or []]
-        for member in members:
-            self._require_profile(str(member.get("profile_id") or ""), owner_key, allow_builtin=True)
-            member.setdefault("slot", self._state["profiles"][member["profile_id"]]["role"])
+        self._ensure_unique_team_name(owner_key, name)
+        members = self._normalize_team_members(owner_key, payload.get("members") or [])
         team = {
             "id": _new_id("team"),
             "owner": owner_key,
@@ -252,6 +250,48 @@ class OrchestrationStore:
         self._state["teams"][team["id"]] = team
         self._save()
         return copy.deepcopy(team)
+
+    def update_team(self, owner: str | None, team_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        team = self._require_writable_team(team_id, owner)
+        if "name" in payload:
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                raise OrchestrationError("name is required")
+            self._ensure_unique_team_name(team["owner"], name, exclude_id=team_id)
+            team["name"] = name
+        if "description" in payload:
+            team["description"] = str(payload.get("description") or "")
+        if "members" in payload:
+            team["members"] = self._normalize_team_members(team["owner"], payload.get("members") or [])
+        if "routing_rules" in payload:
+            team["routing_rules"] = dict(payload.get("routing_rules") or {})
+        if "enabled" in payload:
+            team["enabled"] = bool(payload.get("enabled"))
+        team["updated_at"] = _now()
+        self._save()
+        return copy.deepcopy(team)
+
+    def duplicate_team(self, owner: str | None, team_id: str, name: str | None = None) -> dict[str, Any]:
+        source = self._require_visible_team(str(team_id or ""), owner)
+        clone = copy.deepcopy(source)
+        clone["id"] = _new_id("team")
+        clone["owner"] = _owner_key(owner)
+        clone["name"] = str(name or f"{source['name']} Copy").strip()
+        if not clone["name"]:
+            raise OrchestrationError("name is required")
+        self._ensure_unique_team_name(clone["owner"], clone["name"])
+        clone["enabled"] = True
+        clone["builtin"] = False
+        clone["created_at"] = _now()
+        clone["updated_at"] = _now()
+        self._state["teams"][clone["id"]] = clone
+        self._save()
+        return copy.deepcopy(clone)
+
+    def delete_team(self, owner: str | None, team_id: str) -> None:
+        team = self._require_writable_team(team_id, owner)
+        self._state["teams"].pop(team["id"], None)
+        self._save()
 
     def create_run(self, owner: str | None, payload: dict[str, Any]) -> dict[str, Any]:
         owner_key = _owner_key(owner)
@@ -697,6 +737,25 @@ class OrchestrationStore:
             if profile.get("owner") == owner and str(profile.get("display_name", "")).casefold() == target:
                 raise OrchestrationError("profile display_name must be unique per owner")
 
+    def _ensure_unique_team_name(self, owner: str, name: str, exclude_id: str | None = None) -> None:
+        target = name.casefold()
+        for team_id, team in self._state["teams"].items():
+            if team_id == exclude_id:
+                continue
+            if team.get("owner") == owner and str(team.get("name", "")).casefold() == target:
+                raise OrchestrationError("team name must be unique per owner")
+
+    def _normalize_team_members(self, owner: str, members: Any) -> list[dict[str, Any]]:
+        normalized = []
+        for raw_member in members:
+            member = dict(raw_member)
+            profile_id = str(member.get("profile_id") or "")
+            profile = self._require_profile(profile_id, owner, allow_builtin=True)
+            member["profile_id"] = profile["id"]
+            member["slot"] = str(member.get("slot") or profile["role"])
+            normalized.append(member)
+        return normalized
+
     def _require_profile(self, profile_id: str, owner: str | None, *, allow_builtin: bool = True) -> dict[str, Any]:
         profile = self._state["profiles"].get(str(profile_id or ""))
         if not profile:
@@ -722,6 +781,26 @@ class OrchestrationStore:
             raise OrchestrationError("unknown team")
         if not team.get("enabled", True):
             raise OrchestrationError("team is disabled")
+        return team
+
+    def _require_visible_team(self, team_id: str, owner: str | None) -> dict[str, Any]:
+        team = self._state["teams"].get(str(team_id or ""))
+        if not team:
+            raise OrchestrationError("unknown team")
+        owner_key = _owner_key(owner)
+        if not team.get("builtin") and team.get("owner") != owner_key:
+            raise OrchestrationError("unknown team")
+        return team
+
+    def _require_writable_team(self, team_id: str, owner: str | None) -> dict[str, Any]:
+        team = self._state["teams"].get(str(team_id or ""))
+        if not team:
+            raise OrchestrationError("unknown team")
+        if team.get("builtin"):
+            raise OrchestrationError("Built-in teams are read-only; duplicate them to customize.")
+        owner_key = _owner_key(owner)
+        if team.get("owner") != owner_key:
+            raise OrchestrationError("unknown team")
         return team
 
     def _require_run(self, run_id: str, owner: str) -> dict[str, Any]:

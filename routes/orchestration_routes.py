@@ -75,6 +75,29 @@ def setup_orchestration_routes(store: OrchestrationStore | None = None) -> APIRo
         except OrchestrationError as exc:
             raise _handle_error(exc)
 
+    @router.patch("/teams/{team_id}")
+    async def update_team(team_id: str, request: Request):
+        try:
+            return {"team": store.update_team(_owner(request), team_id, await _json(request))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.post("/teams/{team_id}/duplicate")
+    async def duplicate_team(team_id: str, request: Request):
+        payload = await _json(request)
+        try:
+            return {"team": store.duplicate_team(_owner(request), team_id, payload.get("name"))}
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+
+    @router.delete("/teams/{team_id}")
+    def delete_team(team_id: str, request: Request):
+        try:
+            store.delete_team(_owner(request), team_id)
+        except OrchestrationError as exc:
+            raise _handle_error(exc)
+        return {"ok": True}
+
     @router.get("/runs")
     def list_runs(request: Request):
         return {"runs": store.list_runs(_owner(request))}

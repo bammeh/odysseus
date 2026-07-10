@@ -113,10 +113,44 @@ def test_profile_templates_and_team_cards_support_custom_agents(tmp_path):
     assert team["name"] == "Planning Team"
     assert team["members"][0]["profile_id"] == profile["id"]
 
+    updated = client.patch(
+        f"/api/orchestration/teams/{team['id']}",
+        json={
+            "name": "Planning Team v2",
+            "members": [{"profile_id": profile["id"], "slot": "planner"}],
+            "routing_rules": {"planner": ["plan", "decompose"]},
+            "enabled": False,
+        },
+    ).json()["team"]
+    assert updated["name"] == "Planning Team v2"
+    assert updated["enabled"] is False
+    assert updated["routing_rules"]["planner"] == ["plan", "decompose"]
+
+    duplicate = client.post(
+        f"/api/orchestration/teams/{team['id']}/duplicate",
+        json={"name": "Planning Team Copy"},
+    ).json()["team"]
+    assert duplicate["id"] != team["id"]
+    assert duplicate["name"] == "Planning Team Copy"
+    assert duplicate["enabled"] is True
+
     teams = client.get("/api/orchestration/teams").json()["teams"]
     default = next(team for team in teams if team["builtin"])
     assert default["name"] == "Alice / Bob / Charlie"
     assert {member["slot"] for member in default["members"]} == {"implementer", "reviewer", "integrator"}
+
+    protected = client.patch(
+        f"/api/orchestration/teams/{default['id']}",
+        json={"name": "Custom Default"},
+    )
+    assert protected.status_code == 400
+    assert "read-only" in protected.json()["detail"]
+
+    deleted = client.delete(f"/api/orchestration/teams/{team['id']}")
+    assert deleted.status_code == 200
+    remaining_ids = {item["id"] for item in client.get("/api/orchestration/teams").json()["teams"]}
+    assert team["id"] not in remaining_ids
+    assert duplicate["id"] in remaining_ids
 
 
 def test_runs_handoffs_and_quality_gates_are_generic_over_profiles(tmp_path):
