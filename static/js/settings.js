@@ -41,6 +41,7 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'orchestration') renderOrchestrationSettings();
       if (tab === 'plugins') renderPluginSettings();
     });
   });
@@ -2343,10 +2344,188 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  initOrchestrationSettings();
   initPluginSettings();
 }
 
 let _pluginsLoaded = false;
+let _orchestrationLoaded = false;
+
+async function _fetchSettingsJson(url, options = {}) {
+  const res = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function _orchestrationEmpty(label) {
+  return `<div class="admin-empty">${esc(label)}</div>`;
+}
+
+function _orchestrationRow(title, detail = '', meta = '') {
+  return `
+    <div class="admin-user-row">
+      <div>
+        <div style="font-weight:600;">${esc(title || 'Untitled')}</div>
+        ${detail ? `<div class="admin-toggle-sub">${esc(detail)}</div>` : ''}
+      </div>
+      ${meta ? `<span class="admin-badge">${esc(meta)}</span>` : ''}
+    </div>`;
+}
+
+function _setOrchestrationList(id, items, emptyLabel, renderItem) {
+  const node = el(id);
+  if (!node) return;
+  const rows = Array.isArray(items) ? items : [];
+  node.innerHTML = rows.length ? rows.map(renderItem).join('') : _orchestrationEmpty(emptyLabel);
+}
+
+function _setOrchestrationLoading() {
+  [
+    'settings-orchestration-profile-list',
+    'settings-orchestration-team-list',
+    'settings-orchestration-run-list',
+    'settings-orchestration-job-list',
+    'settings-orchestration-mount-list',
+    'settings-orchestration-memory-stats',
+    'settings-orchestration-maintenance-list',
+  ].forEach(id => {
+    const node = el(id);
+    if (node) node.innerHTML = _orchestrationEmpty('Loading...');
+  });
+}
+
+function _renderMemoryStats(stats) {
+  const node = el('settings-orchestration-memory-stats');
+  if (!node) return;
+  if (!stats || typeof stats !== 'object') {
+    node.innerHTML = _orchestrationEmpty('No memory stats.');
+    return;
+  }
+  const rows = Object.entries(stats).slice(0, 8).map(([key, value]) => {
+    let rendered = value;
+    if (value && typeof value === 'object') rendered = JSON.stringify(value);
+    return _orchestrationRow(key, String(rendered ?? ''), '');
+  });
+  node.innerHTML = rows.length ? rows.join('') : _orchestrationEmpty('No memory stats.');
+}
+
+async function renderOrchestrationSettings(force = false) {
+  const profileList = el('settings-orchestration-profile-list');
+  if (!profileList) return;
+  if (_orchestrationLoaded && !force) return;
+  const msg = el('settings-orchestration-msg');
+  _setOrchestrationLoading();
+  if (msg) msg.textContent = 'Loading orchestration state...';
+  try {
+    const [
+      profilesData,
+      teamsData,
+      runsData,
+      jobsData,
+      mountsData,
+      memoryStats,
+      maintenanceData,
+    ] = await Promise.all([
+      _fetchSettingsJson('/api/orchestration/profiles'),
+      _fetchSettingsJson('/api/orchestration/teams'),
+      _fetchSettingsJson('/api/orchestration/runs'),
+      _fetchSettingsJson('/api/jobs'),
+      _fetchSettingsJson('/api/workspaces/mounts'),
+      _fetchSettingsJson('/api/memory/stats'),
+      _fetchSettingsJson('/api/memory/maintenance/runs'),
+    ]);
+
+    _setOrchestrationList(
+      'settings-orchestration-profile-list',
+      profilesData.profiles || [],
+      'No agent profiles.',
+      profile => _orchestrationRow(
+        profile.display_name || profile.name || profile.id,
+        profile.role || profile.profile_type || profile.id,
+        profile.enabled === false ? 'disabled' : (profile.built_in ? 'built-in' : 'custom'),
+      ),
+    );
+    _setOrchestrationList(
+      'settings-orchestration-team-list',
+      teamsData.teams || [],
+      'No team cards.',
+      team => _orchestrationRow(
+        team.display_name || team.name || team.id,
+        `${(team.members || team.profile_ids || []).length} members`,
+        team.default === true ? 'default' : '',
+      ),
+    );
+    _setOrchestrationList(
+      'settings-orchestration-run-list',
+      runsData.runs || [],
+      'No orchestration runs.',
+      run => _orchestrationRow(
+        run.goal || run.title || run.id,
+        run.id,
+        run.status || 'unknown',
+      ),
+    );
+    _setOrchestrationList(
+      'settings-orchestration-job-list',
+      jobsData.jobs || [],
+      'No background jobs.',
+      job => _orchestrationRow(
+        job.command || job.id,
+        job.cwd || job.task_id || '',
+        job.status || 'unknown',
+      ),
+    );
+    _setOrchestrationList(
+      'settings-orchestration-mount-list',
+      mountsData.mounts || [],
+      'No mounts.',
+      mount => _orchestrationRow(
+        mount.name || mount.id,
+        mount.root || mount.path || '',
+        mount.write_policy || 'read_only',
+      ),
+    );
+    _renderMemoryStats(memoryStats);
+    _setOrchestrationList(
+      'settings-orchestration-maintenance-list',
+      maintenanceData.runs || [],
+      'No maintenance runs.',
+      run => _orchestrationRow(
+        run.kind || run.id,
+        run.owner || run.source || '',
+        run.status || 'unknown',
+      ),
+    );
+    _orchestrationLoaded = true;
+    if (msg) msg.textContent = 'Loaded.';
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to load orchestration state.';
+    [
+      'settings-orchestration-profile-list',
+      'settings-orchestration-team-list',
+      'settings-orchestration-run-list',
+      'settings-orchestration-job-list',
+      'settings-orchestration-mount-list',
+      'settings-orchestration-memory-stats',
+      'settings-orchestration-maintenance-list',
+    ].forEach(id => {
+      const node = el(id);
+      if (node) node.innerHTML = _orchestrationEmpty('Load failed.');
+    });
+  }
+}
+
+function initOrchestrationSettings() {
+  const refreshBtn = el('settings-orchestration-refresh-btn');
+  if (refreshBtn && refreshBtn.dataset.bound !== '1') {
+    refreshBtn.dataset.bound = '1';
+    refreshBtn.addEventListener('click', () => renderOrchestrationSettings(true));
+  }
+}
 
 async function _fetchPluginJson(url, options = {}) {
   const res = await fetch(url, {
@@ -5928,6 +6107,7 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (activeTab === 'orchestration') renderOrchestrationSettings();
   if (activeTab === 'plugins') renderPluginSettings();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();

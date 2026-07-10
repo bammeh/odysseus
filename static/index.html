@@ -1410,6 +1410,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             <span>Agent Tools</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="orchestration">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8.6 7.7 10.8 15"/><path d="M15.4 7.7 13.2 15"/><path d="M9 6h6"/></svg>
+            <span>Orchestration</span>
+          </button>
           <button class="settings-nav-item admin-only" data-settings-tab="plugins">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7V3m8 4V3M6 11h12M7 21h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"/><path d="M9 15h6"/></svg>
             <span>Plugins</span>
@@ -2287,6 +2291,47 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Built-in Tools</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Enable or disable tools available to the AI agent.</div>
             <div id="adm-builtin-tools-list" class="admin-user-list"></div>
+          </div>
+        </div>
+
+        <!-- ═══ ORCHESTRATION TAB ═══ -->
+        <div data-settings-panel="orchestration" class="hidden">
+          <div class="admin-card" style="margin-bottom:12px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8.6 7.7 10.8 15"/><path d="M15.4 7.7 13.2 15"/><path d="M9 6h6"/></svg>Orchestration</h2>
+            <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="admin-btn-sm" id="settings-orchestration-refresh-btn">Refresh</button>
+              <div id="settings-orchestration-msg" class="admin-toggle-sub"></div>
+            </div>
+          </div>
+          <div class="settings-col" style="gap:12px;">
+            <div class="admin-card">
+              <h2>Agent Profiles</h2>
+              <div id="settings-orchestration-profile-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
+            <div class="admin-card">
+              <h2>Team Cards</h2>
+              <div id="settings-orchestration-team-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
+            <div class="admin-card">
+              <h2>Runs</h2>
+              <div id="settings-orchestration-run-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
+            <div class="admin-card">
+              <h2>Jobs</h2>
+              <div id="settings-orchestration-job-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
+            <div class="admin-card">
+              <h2>Mounts</h2>
+              <div id="settings-orchestration-mount-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
+            <div class="admin-card">
+              <h2>Memory Stats</h2>
+              <div id="settings-orchestration-memory-stats" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
+            <div class="admin-card">
+              <h2>Maintenance Runs</h2>
+              <div id="settings-orchestration-maintenance-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            </div>
           </div>
         </div>
 
