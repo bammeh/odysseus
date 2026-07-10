@@ -48,12 +48,22 @@ class MemoryGraphStore:
 
     def neighborhood(self, *, owner: str, node_id: str, budget: int = 25) -> dict[str, Any]:
         owner_key = str(owner or "default")
-        budget = max(1, min(int(budget or 25), 200))
+        requested_budget = int(budget or 25)
+        budget = max(1, min(requested_budget, 200))
         nodes: dict[str, dict] = {}
         edges: list[dict] = []
         start = self._state["nodes"].get(str(node_id))
         if start and start.get("owner") == owner_key:
             nodes[start["id"]] = dict(start)
+        candidate_node_ids: set[str] = set(nodes)
+        for edge in self._state["edges"].values():
+            if edge.get("owner") != owner_key:
+                continue
+            if edge.get("source") == node_id or edge.get("target") == node_id:
+                for endpoint in (edge.get("source"), edge.get("target")):
+                    node = self._state["nodes"].get(endpoint)
+                    if node and node.get("owner") == owner_key:
+                        candidate_node_ids.add(str(endpoint))
         for edge in self._state["edges"].values():
             if len(nodes) >= budget:
                 break
@@ -65,7 +75,16 @@ class MemoryGraphStore:
                     node = self._state["nodes"].get(endpoint)
                     if node and node.get("owner") == owner_key and len(nodes) < budget:
                         nodes[node["id"]] = dict(node)
-        return {"nodes": list(nodes.values()), "edges": edges[:budget], "budget": budget}
+        effective_edges = edges[:budget]
+        proof = {
+            "requested_budget": requested_budget,
+            "effective_budget": budget,
+            "included_nodes": len(nodes),
+            "included_edges": len(effective_edges),
+            "omitted_nodes": max(0, len(candidate_node_ids) - len(nodes)),
+            "truncated": len(candidate_node_ids) > len(nodes) or len(edges) > len(effective_edges),
+        }
+        return {"nodes": list(nodes.values()), "edges": effective_edges, "budget": budget, "proof": proof}
 
     def _load(self) -> dict[str, Any]:
         try:

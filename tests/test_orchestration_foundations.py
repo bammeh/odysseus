@@ -696,6 +696,7 @@ def test_jobs_route_lists_inspects_and_stops_jobs(tmp_path, monkeypatch):
 
 def test_memory_stats_and_progressive_graph_routes(tmp_path):
     from routes.memory_graph_routes import setup_memory_graph_routes
+    from src.memory_graph.maintenance import MemoryMaintenanceStore
     from src.memory_graph.store import MemoryGraphStore
 
     memory_manager = SimpleNamespace(
@@ -709,15 +710,67 @@ def test_memory_stats_and_progressive_graph_routes(tmp_path):
     graph = MemoryGraphStore(tmp_path / "graph.json")
     graph.add_node("n1", owner="alice", kind="memory", label="Preference")
     graph.add_node("n2", owner="alice", kind="project", label="Project")
+    graph.add_node("n3", owner="alice", kind="summary", label="Summary")
     graph.add_edge("n1", "n2", owner="alice", relation="supports")
+    graph.add_edge("n1", "n3", owner="alice", relation="derived")
+    maintenance = MemoryMaintenanceStore(tmp_path / "maintenance.json")
 
-    client = _client(setup_memory_graph_routes(memory_manager, memory_vector, graph))
+    client = _client(setup_memory_graph_routes(memory_manager, memory_vector, graph, maintenance))
     stats = client.get("/api/memory/stats").json()
     assert stats["total"] == 3
     assert stats["by_owner"]["alice"] == 2
     assert stats["vector"]["healthy"] is True
     assert stats["vector"]["count"] == 3
 
-    neighborhood = client.get("/api/graph/neighborhood?owner=alice&node_id=n1&budget=5").json()
+    created = client.post(
+        "/api/memory/maintenance/runs",
+        json={
+            "owner": "alice",
+            "kind": "evidence_summary",
+            "source_ids": ["m1", "m2"],
+            "summary": "Alice prefers scoped evidence.",
+            "evidence": [{"kind": "tool_result", "ref": "hash-1"}],
+            "proof": {"algorithm": "evidence-bound-summary", "input_count": 2},
+        },
+    ).json()["run"]
+    assert created["status"] == "complete"
+    assert created["evidence"][0]["ref"] == "hash-1"
+
+    maintenance_runs = client.get("/api/memory/maintenance/runs?owner=alice").json()["runs"]
+    assert maintenance_runs[0]["id"] == created["id"]
+
+    neighborhood = client.get("/api/graph/neighborhood?owner=alice&node_id=n1&budget=2").json()
     assert {node["id"] for node in neighborhood["nodes"]} == {"n1", "n2"}
     assert neighborhood["edges"][0]["relation"] == "supports"
+    assert neighborhood["proof"] == {
+        "requested_budget": 2,
+        "effective_budget": 2,
+        "included_nodes": 2,
+        "included_edges": 1,
+        "omitted_nodes": 1,
+        "truncated": True,
+    }
+
+
+def test_memory_maintenance_store_persists_evidence_bound_runs(tmp_path):
+    from src.memory_graph.maintenance import MemoryMaintenanceStore
+
+    path = tmp_path / "maintenance.json"
+    store = MemoryMaintenanceStore(path)
+    run = store.create_run(
+        {
+            "owner": "alice",
+            "kind": "cluster_run",
+            "source_ids": ["m1"],
+            "summary": "Clustered memory.",
+            "evidence": [{"kind": "memory", "id": "m1"}],
+            "proof": {"algorithm": "k-means", "k": 1},
+        }
+    )
+
+    reloaded = MemoryMaintenanceStore(path)
+    runs = reloaded.list_runs("alice")
+    assert runs[0]["id"] == run["id"]
+    assert runs[0]["evidence_bound"] is True
+    assert runs[0]["proof"]["algorithm"] == "k-means"
+    assert reloaded.list_runs("bob") == []
