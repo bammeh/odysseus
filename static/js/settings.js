@@ -2350,6 +2350,7 @@ function initAll() {
 
 let _pluginsLoaded = false;
 let _orchestrationLoaded = false;
+let _orchestrationTemplates = [];
 
 async function _fetchSettingsJson(url, options = {}) {
   const res = await fetch(url, {
@@ -2365,14 +2366,17 @@ function _orchestrationEmpty(label) {
   return `<div class="admin-empty">${esc(label)}</div>`;
 }
 
-function _orchestrationRow(title, detail = '', meta = '') {
+function _orchestrationRow(title, detail = '', meta = '', actions = '') {
   return `
     <div class="admin-user-row">
       <div>
         <div style="font-weight:600;">${esc(title || 'Untitled')}</div>
         ${detail ? `<div class="admin-toggle-sub">${esc(detail)}</div>` : ''}
       </div>
-      ${meta ? `<span class="admin-badge">${esc(meta)}</span>` : ''}
+      <div class="settings-row" style="align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+        ${meta ? `<span class="admin-badge">${esc(meta)}</span>` : ''}
+        ${actions}
+      </div>
     </div>`;
 }
 
@@ -2413,6 +2417,50 @@ function _renderMemoryStats(stats) {
   node.innerHTML = rows.length ? rows.join('') : _orchestrationEmpty('No memory stats.');
 }
 
+function _renderOrchestrationProfileTemplates(templates) {
+  _orchestrationTemplates = Array.isArray(templates) ? templates : [];
+  const templateSelect = el('settings-orchestration-profile-template');
+  const roleSelect = el('settings-orchestration-profile-role');
+  if (!templateSelect) return;
+  const options = _orchestrationTemplates.map(template => {
+    const id = String(template.id || template.role || '');
+    return `<option value="${esc(id)}">${esc(template.display_name || template.role || id)}</option>`;
+  });
+  templateSelect.innerHTML = options.length ? options.join('') : '<option value="implementer">Implementer</option>';
+  if (roleSelect && templateSelect.dataset.boundRole !== '1') {
+    templateSelect.dataset.boundRole = '1';
+    templateSelect.addEventListener('change', () => {
+      const template = _orchestrationTemplates.find(item => item.id === templateSelect.value || item.role === templateSelect.value);
+      if (template && template.role) roleSelect.value = template.role;
+    });
+  }
+}
+
+function _profileActions(profile) {
+  const profileId = esc(profile.id || '');
+  const duplicate = `<button type="button" class="admin-btn-sm settings-orchestration-profile-duplicate" data-profile-id="${profileId}">Duplicate</button>`;
+  if (profile.builtin || profile.read_only) return duplicate;
+  const enabled = profile.enabled !== false;
+  const toggle = `<button type="button" class="admin-btn-sm settings-orchestration-profile-toggle" data-profile-id="${profileId}" data-enabled="${enabled ? '0' : '1'}">${enabled ? 'Disable' : 'Enable'}</button>`;
+  const remove = `<button type="button" class="admin-btn-sm settings-orchestration-profile-delete" data-profile-id="${profileId}">Delete</button>`;
+  return `${duplicate}${toggle}${remove}`;
+}
+
+function _renderOrchestrationProfiles(profiles) {
+  _setOrchestrationList(
+    'settings-orchestration-profile-list',
+    profiles || [],
+    'No agent profiles.',
+    profile => _orchestrationRow(
+      profile.display_name || profile.name || profile.id,
+      profile.role || profile.profile_type || profile.id,
+      profile.enabled === false ? 'disabled' : (profile.builtin ? 'built-in' : 'custom'),
+      _profileActions(profile),
+    ),
+  );
+  _bindOrchestrationProfileActions();
+}
+
 async function renderOrchestrationSettings(force = false) {
   const profileList = el('settings-orchestration-profile-list');
   if (!profileList) return;
@@ -2423,6 +2471,7 @@ async function renderOrchestrationSettings(force = false) {
   try {
     const [
       profilesData,
+      templatesData,
       teamsData,
       runsData,
       jobsData,
@@ -2431,6 +2480,7 @@ async function renderOrchestrationSettings(force = false) {
       maintenanceData,
     ] = await Promise.all([
       _fetchSettingsJson('/api/orchestration/profiles'),
+      _fetchSettingsJson('/api/orchestration/profile-templates'),
       _fetchSettingsJson('/api/orchestration/teams'),
       _fetchSettingsJson('/api/orchestration/runs'),
       _fetchSettingsJson('/api/jobs'),
@@ -2439,16 +2489,8 @@ async function renderOrchestrationSettings(force = false) {
       _fetchSettingsJson('/api/memory/maintenance/runs'),
     ]);
 
-    _setOrchestrationList(
-      'settings-orchestration-profile-list',
-      profilesData.profiles || [],
-      'No agent profiles.',
-      profile => _orchestrationRow(
-        profile.display_name || profile.name || profile.id,
-        profile.role || profile.profile_type || profile.id,
-        profile.enabled === false ? 'disabled' : (profile.built_in ? 'built-in' : 'custom'),
-      ),
-    );
+    _renderOrchestrationProfileTemplates(templatesData.templates || []);
+    _renderOrchestrationProfiles(profilesData.profiles || []);
     _setOrchestrationList(
       'settings-orchestration-team-list',
       teamsData.teams || [],
@@ -2521,10 +2563,102 @@ async function renderOrchestrationSettings(force = false) {
 
 function initOrchestrationSettings() {
   const refreshBtn = el('settings-orchestration-refresh-btn');
+  const createBtn = el('settings-orchestration-profile-create-btn');
   if (refreshBtn && refreshBtn.dataset.bound !== '1') {
     refreshBtn.dataset.bound = '1';
     refreshBtn.addEventListener('click', () => renderOrchestrationSettings(true));
   }
+  if (createBtn && createBtn.dataset.bound !== '1') {
+    createBtn.dataset.bound = '1';
+    createBtn.addEventListener('click', () => createOrchestrationProfile());
+  }
+}
+
+async function createOrchestrationProfile() {
+  const nameInput = el('settings-orchestration-profile-name');
+  const roleSelect = el('settings-orchestration-profile-role');
+  const templateSelect = el('settings-orchestration-profile-template');
+  const msg = el('settings-orchestration-msg');
+  const displayName = nameInput ? nameInput.value.trim() : '';
+  if (!displayName) {
+    if (msg) msg.textContent = 'Enter an agent name.';
+    return;
+  }
+  const template = _orchestrationTemplates.find(item => item.id === templateSelect?.value || item.role === templateSelect?.value) || {};
+  try {
+    if (msg) msg.textContent = 'Creating agent...';
+    await _fetchSettingsJson('/api/orchestration/profiles', {
+      method: 'POST',
+      body: JSON.stringify({
+        display_name: displayName,
+        role: roleSelect?.value || template.role || 'implementer',
+        instructions: template.instructions || '',
+        capabilities: template.capabilities || [],
+        enabled: true,
+      }),
+    });
+    if (nameInput) nameInput.value = '';
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to create agent.';
+  }
+}
+
+async function duplicateOrchestrationProfile(profileId) {
+  const msg = el('settings-orchestration-msg');
+  try {
+    if (msg) msg.textContent = 'Duplicating agent...';
+    await _fetchSettingsJson(`/api/orchestration/profiles/${profileId}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to duplicate agent.';
+  }
+}
+
+async function toggleOrchestrationProfile(profileId, enabled) {
+  const msg = el('settings-orchestration-msg');
+  try {
+    if (msg) msg.textContent = 'Updating agent...';
+    await _fetchSettingsJson(`/api/orchestration/profiles/${profileId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: !!enabled }),
+    });
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to update agent.';
+  }
+}
+
+async function deleteOrchestrationProfile(profileId) {
+  const msg = el('settings-orchestration-msg');
+  try {
+    if (msg) msg.textContent = 'Deleting agent...';
+    await _fetchSettingsJson(`/api/orchestration/profiles/${profileId}`, { method: 'DELETE' });
+    _orchestrationLoaded = false;
+    await renderOrchestrationSettings(true);
+  } catch (err) {
+    if (msg) msg.textContent = 'Failed to delete agent.';
+  }
+}
+
+function _bindOrchestrationProfileActions() {
+  const root = el('settings-orchestration-profile-list');
+  if (!root) return;
+  root.querySelectorAll('.settings-orchestration-profile-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => duplicateOrchestrationProfile(btn.dataset.profileId));
+  });
+  root.querySelectorAll('.settings-orchestration-profile-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleOrchestrationProfile(btn.dataset.profileId, btn.dataset.enabled === '1'));
+  });
+  root.querySelectorAll('.settings-orchestration-profile-delete').forEach(btn => {
+    btn.addEventListener('click', () => deleteOrchestrationProfile(btn.dataset.profileId));
+  });
 }
 
 async function _fetchPluginJson(url, options = {}) {

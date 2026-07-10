@@ -2306,6 +2306,21 @@
           <div class="settings-col" style="gap:12px;">
             <div class="admin-card">
               <h2>Agent Profiles</h2>
+              <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                <input id="settings-orchestration-profile-name" class="settings-select" type="text" placeholder="Agent name" style="flex:1;min-width:180px;">
+                <select id="settings-orchestration-profile-template" class="settings-select" style="min-width:150px;">
+                  <option value="implementer">Implementer</option>
+                </select>
+                <select id="settings-orchestration-profile-role" class="settings-select" style="min-width:140px;">
+                  <option value="implementer">Implementer</option>
+                  <option value="reviewer">Reviewer</option>
+                  <option value="integrator">Integrator</option>
+                  <option value="researcher">Researcher</option>
+                  <option value="planner">Planner</option>
+                  <option value="tester">Tester</option>
+                </select>
+                <button type="button" class="admin-btn-add" id="settings-orchestration-profile-create-btn">Create Agent</button>
+              </div>
               <div id="settings-orchestration-profile-list" class="admin-user-list"><div class="admin-empty">Loading...</div></div>
             </div>
             <div class="admin-card">
